@@ -16,6 +16,9 @@ export interface InjuryRecord {
   injuryDate: string
   description: string
   diagnosisReport?: string
+  diagnosisReportNote?: string
+  diagnosisReportTags?: string[]
+  followUpDate?: string
   severity: 'mild' | 'moderate' | 'severe'
   createdAt: string
 }
@@ -147,4 +150,18 @@ export interface Notification {
   message: string
   timestamp: string
   read: boolean
+}
+
+export interface DailyTrendData {
+  date: string
+  completionRate: number
+  avgScore: number
+  lowScoreCount: number
+  feedbackCount: number
+  exerciseCount: number
+}
+
+export interface ExerciseWithLastCheckIn {
+  exercise: Exercise
+  lastCheckIn?: CheckInRecord & { date: string }
 }

@@ -11,6 +11,7 @@ import type {
   ChatMessage,
   Notification,
   Exercise,
+  DailyTrendData,
 } from '@/types'
 import {
   currentUser,
@@ -27,6 +28,10 @@ import {
 
 function getTodayKey() {
   return new Date().toISOString().split('T')[0]
+}
+
+function formatDateKey(d: Date) {
+  return d.toISOString().split('T')[0]
 }
 
 function getDaysInRange(start: string, end: string): string[] {
@@ -177,6 +182,13 @@ interface AppState {
   addTherapistReview: (checkInId: string, therapistId: string, exerciseName: string, comment: string) => void
   getRecentCheckIns: (planId: string, limit?: number) => (CheckInRecord & { exercise?: Exercise })[]
   getLowScoreCheckIns: (planId: string, threshold?: number) => (CheckInRecord & { exercise?: Exercise })[]
+  getTrendData: (planId: string, days?: number) => DailyTrendData[]
+  getExercisesWithLastCheckIn: (planId: string) => { exercise: Exercise; lastCheckIn?: CheckInRecord & { date: string } }[]
+  updateInjuryNote: (injuryId: string, note: string) => void
+  updateInjuryTags: (injuryId: string, tags: string[]) => void
+  updateInjuryFollowUp: (injuryId: string, date: string) => void
+  getAllTags: () => string[]
+  getFilteredInjuries: (tagFilter?: string | null) => InjuryRecord[]
   fileToBase64: (file: File) => Promise<string>
 }
 
@@ -605,6 +617,95 @@ export const useStore = create<AppState>()(
           .sort((a, b) => a.aiScore - b.aiScore)
           .map((c) => ({ ...c, exercise: exMap.get(c.exerciseId) }))
       },
+
+      getTrendData: (planId, days = 14) => {
+        const state = get()
+        const result: DailyTrendData[] = []
+        const today = new Date()
+        for (let i = days - 1; i >= 0; i--) {
+          const d = new Date(today)
+          d.setDate(today.getDate() - i)
+          const dateKey = formatDateKey(d)
+          const dayCheckIns = state.checkIns.filter(
+            (c) => c.planId === planId && c.date === dateKey,
+          )
+          const completed = dayCheckIns.filter((c) => c.completed).length
+          const total = dayCheckIns.length || state.plans.find((p) => p.id === planId)?.exercises.length || 0
+          const scored = dayCheckIns.filter((c) => c.completed && c.aiScore > 0)
+          const avgScore = scored.length > 0
+            ? scored.reduce((sum, c) => sum + c.aiScore, 0) / scored.length
+            : 0
+          const lowScoreCount = scored.filter((c) => c.aiScore < 70).length
+          const feedbackCount = dayCheckIns.filter((c) => c.therapistFeedback).length
+          result.push({
+            date: dateKey,
+            completionRate: total > 0 ? (completed / total) * 100 : 0,
+            avgScore,
+            lowScoreCount,
+            feedbackCount,
+            exerciseCount: total,
+          })
+        }
+        return result
+      },
+
+      getExercisesWithLastCheckIn: (planId) => {
+        const state = get()
+        const thePlan = state.plans.find((p) => p.id === planId)
+        if (!thePlan) return []
+        return thePlan.exercises.map((exercise) => {
+          const checkIns = state.checkIns
+            .filter((c) => c.planId === planId && c.exerciseId === exercise.id && c.completed)
+            .sort((a, b) => b.date.localeCompare(a.date))
+          const lastCheckIn = checkIns[0]
+          return {
+            exercise,
+            lastCheckIn: lastCheckIn ? { ...lastCheckIn, date: lastCheckIn.date } : undefined,
+          }
+        })
+      },
+
+      updateInjuryNote: (injuryId, note) => {
+        set((state) => ({
+          injuries: state.injuries.map((i) =>
+            i.id === injuryId ? { ...i, diagnosisReportNote: note } : i,
+          ),
+        }))
+      },
+
+      updateInjuryTags: (injuryId, tags) => {
+        set((state) => ({
+          injuries: state.injuries.map((i) =>
+            i.id === injuryId ? { ...i, diagnosisReportTags: tags } : i,
+          ),
+        }))
+      },
+
+      updateInjuryFollowUp: (injuryId, date) => {
+        set((state) => ({
+          injuries: state.injuries.map((i) =>
+            i.id === injuryId ? { ...i, followUpDate: date } : i,
+          ),
+        }))
+      },
+
+      getAllTags: () => {
+        const state = get()
+        const tagSet = new Set<string>()
+        state.injuries.forEach((i) => {
+          i.diagnosisReportTags?.forEach((t) => tagSet.add(t))
+        })
+        return Array.from(tagSet)
+      },
+
+      getFilteredInjuries: (tagFilter) => {
+        const state = get()
+        if (!tagFilter) return state.injuries
+        return state.injuries.filter((i) =>
+          i.diagnosisReportTags?.includes(tagFilter),
+        )
+      },
+
     }),
     {
       name: 'rehab-app-storage',

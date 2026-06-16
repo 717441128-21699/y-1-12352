@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Calendar, FileText, AlertCircle, X, Upload,
-  Type, CheckCircle2, FileImage,
+  Type, CheckCircle2, FileImage, Tag, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { useStore } from '@/store'
 import type { InjuryRecord } from '@/types'
@@ -28,6 +28,9 @@ const emptyForm = {
   description: '',
   severity: 'mild' as InjuryRecord['severity'],
   diagnosisReport: '',
+  tags: [] as string[],
+  followUpDate: '',
+  note: '',
 }
 
 type ReportMode = 'file' | 'text'
@@ -202,8 +205,343 @@ function DiagnosisReportDisplay({ value }: { value: string }) {
   return null
 }
 
+function TagFilterBar({
+  allTags,
+  activeTag,
+  onSelect,
+}: {
+  allTags: string[]
+  activeTag: string | null
+  onSelect: (tag: string | null) => void
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap gap-2">
+      <button
+        onClick={() => onSelect(null)}
+        className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+          activeTag === null
+            ? 'text-white'
+            : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+        }`}
+        style={activeTag === null ? { backgroundColor: '#0EA5A0' } : {}}
+      >
+        全部
+      </button>
+      {allTags.map((tag) => (
+        <button
+          key={tag}
+          onClick={() => onSelect(tag)}
+          className={`inline-flex items-center gap-1 rounded-full px-4 py-1.5 text-sm font-medium transition ${
+            activeTag === tag
+              ? 'text-white'
+              : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+          }`}
+          style={activeTag === tag ? { backgroundColor: '#0EA5A0' } : {}}
+        >
+          <Tag size={12} />
+          {tag}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function NotePreview({ note }: { note: string }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!note) return null
+
+  const showExpand = note.length > 50
+  const displayText = expanded || !showExpand ? note : note.slice(0, 50) + '...'
+
+  return (
+    <div
+      className="mt-2 cursor-pointer rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500 transition hover:bg-gray-100"
+      onClick={(e) => {
+        e.stopPropagation()
+        setExpanded(!expanded)
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="leading-relaxed">{displayText}</span>
+        {showExpand && (
+          <span className="flex-shrink-0 text-[#0EA5A0]">
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function InjuryDetailModal({
+  injury,
+  onClose,
+  onUpdateNote,
+  onUpdateTags,
+  onUpdateFollowUp,
+}: {
+  injury: InjuryRecord
+  onClose: () => void
+  onUpdateNote: (note: string) => void
+  onUpdateTags: (tags: string[]) => void
+  onUpdateFollowUp: (date: string) => void
+}) {
+  const [note, setNote] = useState(injury.diagnosisReportNote || '')
+  const [tags, setTags] = useState<string[]>(injury.diagnosisReportTags || [])
+  const [newTag, setNewTag] = useState('')
+  const [followUpDate, setFollowUpDate] = useState(injury.followUpDate || '')
+  const [showPdfModal, setShowPdfModal] = useState(false)
+  const [pdfData, setPdfData] = useState<{ base64: string; fileName: string; fileSize: number } | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2000)
+  }
+
+  const handleSaveNote = () => {
+    onUpdateNote(note)
+    showToast('备注已保存')
+  }
+
+  const handleAddTag = () => {
+    const trimmed = newTag.trim()
+    if (!trimmed) return
+    if (tags.includes(trimmed)) {
+      showToast('标签已存在')
+      return
+    }
+    const newTags = [...tags, trimmed]
+    setTags(newTags)
+    onUpdateTags(newTags)
+    setNewTag('')
+    showToast('标签已添加')
+  }
+
+  const handleRemoveTag = (tag: string) => {
+    const newTags = tags.filter((t) => t !== tag)
+    setTags(newTags)
+    onUpdateTags(newTags)
+    showToast('标签已删除')
+  }
+
+  const handleSaveFollowUp = () => {
+    onUpdateFollowUp(followUpDate)
+    showToast('复查日期已保存')
+  }
+
+  const parsed = injury.diagnosisReport ? parseDiagnosisReport(injury.diagnosisReport) : null
+
+  const handleViewPdf = () => {
+    if (parsed && parsed.type === 'pdf') {
+      setPdfData({ base64: parsed.base64, fileName: parsed.fileName, fileSize: parsed.fileSize })
+      setShowPdfModal(true)
+    }
+  }
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0, y: 20 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.9, opacity: 0, y: 20 }}
+          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+          className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-5 py-4">
+            <div>
+              <h2 className="text-lg font-bold text-gray-800">{injury.bodyPart}</h2>
+              <div className="mt-1 flex items-center gap-2">
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${SEVERITY_BADGE[injury.severity]}`}>
+                  {SEVERITY_LABEL[injury.severity]}
+                </span>
+                <span className="text-xs text-gray-400">{injury.injuryDate}</span>
+              </div>
+            </div>
+            <button onClick={onClose} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="p-5 space-y-5">
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-gray-700">伤情描述</h3>
+              <p className="text-sm leading-relaxed text-gray-600">{injury.description}</p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-gray-700">诊断报告</h3>
+              {parsed ? (
+                <>
+                  {parsed.type === 'image' && (
+                    <img
+                      src={parsed.base64}
+                      alt={parsed.fileName || '诊断报告'}
+                      className="w-full cursor-pointer rounded-lg border border-gray-200 object-cover transition hover:opacity-90"
+                      onClick={() => window.open(parsed.base64, '_blank')}
+                    />
+                  )}
+                  {parsed.type === 'pdf' && (
+                    <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <FileText size={40} style={{ color: '#EF4444' }} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-gray-700">{parsed.fileName}</p>
+                        <p className="text-xs text-gray-400">{formatFileSize(parsed.fileSize)}</p>
+                      </div>
+                      <button
+                        onClick={handleViewPdf}
+                        className="rounded-md px-3 py-1.5 text-xs font-medium text-white"
+                        style={{ backgroundColor: '#0EA5A0' }}
+                      >
+                        查看 PDF
+                      </button>
+                    </div>
+                  )}
+                  {parsed.type === 'text' && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm leading-relaxed text-gray-600">
+                      {parsed.content}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-gray-400">暂无诊断报告</p>
+              )}
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-gray-700">备注</h3>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={3}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#0EA5A0] focus:outline-none"
+                placeholder="添加备注信息..."
+              />
+              <div className="mt-2 flex justify-end">
+                <button
+                  onClick={handleSaveNote}
+                  className="rounded-md px-4 py-1.5 text-xs font-medium text-white"
+                  style={{ backgroundColor: '#0EA5A0' }}
+                >
+                  保存备注
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-gray-700">标签管理</h3>
+              <div className="mb-3 flex flex-wrap gap-2">
+                {tags.length === 0 ? (
+                  <span className="text-xs text-gray-400">暂无标签</span>
+                ) : (
+                  tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium"
+                      style={{ backgroundColor: 'rgba(14, 165, 160, 0.12)', color: '#0EA5A0' }}
+                    >
+                      <Tag size={11} />
+                      {tag}
+                      <button
+                        onClick={() => handleRemoveTag(tag)}
+                        className="ml-0.5 rounded-full p-0.5 transition hover:bg-black/10"
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newTag}
+                  onChange={(e) => setNewTag(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddTag()}
+                  placeholder="输入新标签"
+                  className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#0EA5A0] focus:outline-none"
+                />
+                <button
+                  onClick={handleAddTag}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-white"
+                  style={{ backgroundColor: '#FF8C42' }}
+                >
+                  添加
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-gray-700">复查日期</h3>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="date"
+                    value={followUpDate}
+                    onChange={(e) => setFollowUpDate(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-[#0EA5A0] focus:outline-none"
+                  />
+                </div>
+                <button
+                  onClick={handleSaveFollowUp}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-white"
+                  style={{ backgroundColor: '#0EA5A0' }}
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
+
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -20, opacity: 0 }}
+            className="fixed left-1/2 top-6 z-[60] -translate-x-1/2 rounded-lg bg-gray-800 px-4 py-2 text-sm text-white shadow-lg"
+          >
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showPdfModal && pdfData && (
+          <PdfModal
+            base64={pdfData.base64}
+            fileName={pdfData.fileName}
+            fileSize={pdfData.fileSize}
+            onClose={() => setShowPdfModal(false)}
+          />
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
 export default function Injury() {
-  const { injuries, addInjury, fileToBase64 } = useStore()
+  const {
+    addInjury,
+    fileToBase64,
+    getFilteredInjuries,
+    getAllTags,
+    updateInjuryNote,
+    updateInjuryTags,
+    updateInjuryFollowUp,
+  } = useStore()
+
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [reportMode, setReportMode] = useState<ReportMode>('file')
@@ -211,6 +549,12 @@ export default function Injury() {
   const [showToast, setShowToast] = useState(false)
   const [converting, setConverting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [selectedInjury, setSelectedInjury] = useState<InjuryRecord | null>(null)
+
+  const injuries = getFilteredInjuries(tagFilter)
+  const allTags = getAllTags()
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -271,6 +615,9 @@ export default function Injury() {
       description: form.description,
       severity: form.severity,
       diagnosisReport: diagnosisValue,
+      diagnosisReportNote: form.note || undefined,
+      diagnosisReportTags: form.tags.length > 0 ? form.tags : undefined,
+      followUpDate: form.followUpDate || undefined,
       createdAt: new Date().toISOString(),
     })
 
@@ -334,6 +681,18 @@ export default function Injury() {
         </button>
       </div>
     )
+  }
+
+  const handleUpdateNote = (injuryId: string, note: string) => {
+    updateInjuryNote(injuryId, note)
+  }
+
+  const handleUpdateTags = (injuryId: string, tags: string[]) => {
+    updateInjuryTags(injuryId, tags)
+  }
+
+  const handleUpdateFollowUp = (injuryId: string, date: string) => {
+    updateInjuryFollowUp(injuryId, date)
   }
 
   return (
@@ -413,8 +772,8 @@ export default function Injury() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-600">严重程度</label>
-                  <div className="flex gap-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">严重程度</label
+                  ><div className="flex gap-2">
                     {SEVERITY_OPTIONS.map((s) => (
                       <button
                         key={s.key}
@@ -515,6 +874,14 @@ export default function Injury() {
           )}
         </AnimatePresence>
 
+        {allTags.length > 0 && (
+          <TagFilterBar
+            allTags={allTags}
+            activeTag={tagFilter}
+            onSelect={setTagFilter}
+          />
+        )}
+
         {injuries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <AlertCircle size={48} strokeWidth={1.5} />
@@ -532,7 +899,10 @@ export default function Injury() {
                 className="relative mb-6"
               >
                 <div className={`absolute -left-[31px] top-1 h-4 w-4 rounded-full border-2 border-white ${SEVERITY_DOT[injury.severity]}`} />
-                <div className="rounded-xl bg-white p-4 shadow-sm">
+                <div
+                  className="cursor-pointer rounded-xl bg-white p-4 shadow-sm transition hover:shadow-md hover:-translate-y-0.5"
+                  onClick={() => setSelectedInjury(injury)}
+                >
                   <div className="flex items-start justify-between">
                     <h3 className="font-semibold text-gray-800">{injury.bodyPart}</h3>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${SEVERITY_BADGE[injury.severity]}`}>
@@ -544,8 +914,35 @@ export default function Injury() {
                     <span>{injury.injuryDate}</span>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed text-gray-600">{injury.description}</p>
+
+                  {injury.diagnosisReportTags && injury.diagnosisReportTags.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {injury.diagnosisReportTags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
+                          style={{ backgroundColor: 'rgba(14, 165, 160, 0.12)', color: '#0EA5A0' }}
+                        >
+                          <Tag size={10} />
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {injury.followUpDate && (
+                    <div className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: '#FF8C42' }}>
+                      <Calendar size={12} />
+                      复查日期：{injury.followUpDate}
+                    </div>
+                  )}
+
                   {injury.diagnosisReport && (
                     <DiagnosisReportDisplay value={injury.diagnosisReport} />
+                  )}
+
+                  {injury.diagnosisReportNote && (
+                    <NotePreview note={injury.diagnosisReportNote} />
                   )}
                 </div>
               </motion.div>
@@ -553,6 +950,18 @@ export default function Injury() {
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {selectedInjury && (
+          <InjuryDetailModal
+            injury={selectedInjury}
+            onClose={() => setSelectedInjury(null)}
+            onUpdateNote={(note) => handleUpdateNote(selectedInjury.id, note)}
+            onUpdateTags={(tags) => handleUpdateTags(selectedInjury.id, tags)}
+            onUpdateFollowUp={(date) => handleUpdateFollowUp(selectedInjury.id, date)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   CalendarDays, CheckCircle2, Clock, ShieldCheck,
   ChevronDown, AlertTriangle, Dumbbell, Timer,
-  Calendar, Sparkles, TrendingUp,
+  Calendar, Sparkles, TrendingUp, MessageSquare,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { useStore } from '@/store'
-import type { Exercise, RehabPlan } from '@/types'
+import type { Exercise, RehabPlan, CheckInRecord } from '@/types'
 
 const categoryConfig = {
   stretch: { label: '拉伸', bg: 'bg-blue-100', text: 'text-blue-700' },
@@ -27,78 +28,275 @@ function daysBetween(a: string, b: string): number {
   return Math.floor((new Date(b).getTime() - new Date(a).getTime()) / (1000 * 60 * 60 * 24))
 }
 
-function ExerciseCard({ exercise, index }: { exercise: Exercise; index: number }) {
+function getScoreColor(score: number) {
+  if (score < 60) return '#EF4444'
+  if (score <= 80) return '#FF8C42'
+  return '#34D399'
+}
+
+function MiniScoreRing({ score, size = 36 }: { score: number; size?: number }) {
+  const r = (size - 4) / 2
+  const circ = 2 * Math.PI * r
+  const offset = circ - (score / 100) * circ
+  const color = getScoreColor(score)
+  return (
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#E5E7EB" strokeWidth={3} />
+        <motion.circle
+          cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color}
+          strokeWidth={3} strokeLinecap="round" strokeDasharray={circ}
+          initial={{ strokeDashoffset: circ }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 0.6, ease: 'easeOut' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[10px] font-bold" style={{ color }}>{score}</span>
+      </div>
+    </div>
+  )
+}
+
+function ScoreRing({ score, size = 72 }: { score: number; size?: number }) {
+  const r = (size - 8) / 2
+  const circ = 2 * Math.PI * r
+  const offset = circ - (score / 100) * circ
+  const color = getScoreColor(score)
+  return (
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#E5E7EB" strokeWidth={6} />
+        <motion.circle
+          cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color}
+          strokeWidth={6} strokeLinecap="round" strokeDasharray={circ}
+          initial={{ strokeDashoffset: circ }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 0.8, ease: 'easeOut' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-lg font-bold" style={{ color }}>{score}</span>
+      </div>
+    </div>
+  )
+}
+
+function formatDateCN(dateStr: string) {
+  const d = new Date(dateStr)
+  return `${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+function ExerciseCard({
+  exercise,
+  lastCheckIn,
+  index,
+}: {
+  exercise: Exercise
+  lastCheckIn?: CheckInRecord & { date: string }
+  index: number
+}) {
   const [expanded, setExpanded] = useState(false)
+  const [photoModal, setPhotoModal] = useState<string | null>(null)
   const cat = categoryConfig[exercise.category]
+  const hasCheckIn = lastCheckIn && lastCheckIn.completed
+  const hasTherapistFeedback = lastCheckIn?.therapistFeedback
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.08 }}
-      className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"
-    >
-      <div
-        className="flex items-center gap-3 p-4 cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
+    <>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: index * 0.08 }}
+        className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"
       >
-        <img
-          src={exercise.imageUrl}
-          alt={exercise.name}
-          className="w-16 h-16 rounded-lg object-cover flex-shrink-0"
-        />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-gray-900 truncate">{exercise.name}</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full ${cat.bg} ${cat.text}`}>
-              {cat.label}
-            </span>
+        <div
+          className="flex items-center gap-3 p-4 cursor-pointer"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <img
+            src={exercise.imageUrl}
+            alt={exercise.name}
+            className="w-16 h-16 rounded-lg object-cover flex-shrink-0"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="font-medium text-gray-900 truncate">{exercise.name}</span>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${cat.bg} ${cat.text}`}>
+                {cat.label}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-sm text-gray-500">
+              <span className="flex items-center gap-1"><Dumbbell size={14} />{exercise.sets}×{exercise.reps}</span>
+              <span className="flex items-center gap-1"><Timer size={14} />{exercise.duration}s</span>
+            </div>
           </div>
-          <div className="flex items-center gap-3 text-sm text-gray-500">
-            <span className="flex items-center gap-1"><Dumbbell size={14} />{exercise.sets}×{exercise.reps}</span>
-            <span className="flex items-center gap-1"><Timer size={14} />{exercise.duration}s</span>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {hasCheckIn ? (
+              <div className="flex items-center gap-2">
+                <MiniScoreRing score={lastCheckIn.aiScore} />
+                {hasTherapistFeedback && (
+                  <div className="relative">
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center"
+                      style={{ backgroundColor: '#FF8C42' }}
+                    >
+                      <MessageSquare size={14} className="text-white" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className="text-xs text-gray-400">未打卡</span>
+            )}
+            <motion.div animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
+              <ChevronDown size={18} className="text-gray-400" />
+            </motion.div>
           </div>
         </div>
-        <motion.div animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
-          <ChevronDown size={18} className="text-gray-400" />
-        </motion.div>
-      </div>
+
+        {hasCheckIn && (
+          <div className="px-4 pb-2 -mt-1">
+            <div className="flex items-center gap-1.5 text-xs text-gray-400">
+              <CalendarDays size={12} />
+              <span>最近打卡：{formatDateCN(lastCheckIn.date)}</span>
+            </div>
+          </div>
+        )}
+
+        <AnimatePresence>
+          {expanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25 }}
+              className="overflow-hidden"
+            >
+              <div className="px-4 pb-4 border-t border-gray-50 pt-3 space-y-4">
+                {hasCheckIn ? (
+                  <>
+                    <div className="flex gap-3 items-start">
+                      {lastCheckIn.photoUrl ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setPhotoModal(lastCheckIn.photoUrl) }}
+                          className="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 shadow-sm relative group"
+                        >
+                          <img
+                            src={lastCheckIn.photoUrl}
+                            alt={exercise.name}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <ImageIcon size={20} className="text-white" />
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="w-20 h-20 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
+                          <ImageIcon size={24} className="text-gray-300" />
+                        </div>
+                      )}
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 mb-2">
+                          <ScoreRing score={lastCheckIn.aiScore} size={56} />
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">AI 评分</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {lastCheckIn.aiScore >= 90 ? '优秀' : lastCheckIn.aiScore >= 75 ? '良好' : lastCheckIn.aiScore >= 60 ? '及格' : '需改进'}
+                            </p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-600 leading-relaxed">{lastCheckIn.aiFeedback}</p>
+                      </div>
+                    </div>
+
+                    {lastCheckIn.corrections.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium text-orange-600 mb-2 flex items-center gap-1.5">
+                          <AlertTriangle size={14} />纠正要点
+                        </p>
+                        <ul className="space-y-1.5">
+                          {lastCheckIn.corrections.map((c, i) => (
+                            <li key={i} className="text-sm text-gray-600 flex items-start gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#FF8C42] mt-1.5 flex-shrink-0" />
+                              {c}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {lastCheckIn.therapistFeedback && (
+                      <div className="rounded-lg p-3 border" style={{ backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }}>
+                        <p className="text-xs font-medium mb-1.5 flex items-center gap-1.5" style={{ color: '#FF8C42' }}>
+                          <MessageSquare size={12} />康复师评语
+                        </p>
+                        <p className="text-sm text-gray-700 leading-relaxed">{lastCheckIn.therapistFeedback}</p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-6">
+                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-2">
+                      <CalendarDays size={20} className="text-gray-400" />
+                    </div>
+                    <p className="text-sm text-gray-500">暂无训练记录</p>
+                    <p className="text-xs text-gray-400 mt-1">完成打卡后这里会显示训练反馈</p>
+                  </div>
+                )}
+
+                <div className="border-t border-gray-100 pt-3 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-teal-700 mb-1.5">要点提示</p>
+                    <ul className="space-y-1">
+                      {exercise.keyPoints.map((p, i) => (
+                        <li key={i} className="text-sm text-gray-600 flex items-start gap-1.5">
+                          <CheckCircle2 size={14} className="text-teal-500 mt-0.5 flex-shrink-0" />{p}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-orange-600 mb-1.5">常见错误</p>
+                    <ul className="space-y-1">
+                      {exercise.commonErrors.map((e, i) => (
+                        <li key={i} className="text-sm text-gray-600 flex items-start gap-1.5">
+                          <AlertTriangle size={14} className="text-orange-400 mt-0.5 flex-shrink-0" />{e}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
 
       <AnimatePresence>
-        {expanded && (
+        {photoModal && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            className="overflow-hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() => setPhotoModal(null)}
           >
-            <div className="px-4 pb-4 border-t border-gray-50 pt-3 space-y-3">
-              <div>
-                <p className="text-sm font-medium text-teal-700 mb-1">要点提示</p>
-                <ul className="space-y-1">
-                  {exercise.keyPoints.map((p, i) => (
-                    <li key={i} className="text-sm text-gray-600 flex items-start gap-1.5">
-                      <CheckCircle2 size={14} className="text-teal-500 mt-0.5 flex-shrink-0" />{p}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-orange-600 mb-1">常见错误</p>
-                <ul className="space-y-1">
-                  {exercise.commonErrors.map((e, i) => (
-                    <li key={i} className="text-sm text-gray-600 flex items-start gap-1.5">
-                      <AlertTriangle size={14} className="text-orange-400 mt-0.5 flex-shrink-0" />{e}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+            <motion.img
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              src={photoModal}
+              alt="打卡照片"
+              className="max-h-[85vh] max-w-full rounded-xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </>
   )
 }
 
@@ -139,8 +337,12 @@ function PlanSelector({ plans, injuries, activeId, onSelect }: {
 }
 
 export default function Plan() {
-  const { plan, plans, injuries, therapists, assessments, setActivePlan } = useStore()
+  const { plan, plans, injuries, therapists, assessments, setActivePlan, getExercisesWithLastCheckIn } = useStore()
   const therapist = therapists.find((t) => t.id === plan.therapistId)
+
+  const exercisesWithLastCheckIn = useMemo(() => {
+    return getExercisesWithLastCheckIn(plan.id)
+  }, [plan.id, getExercisesWithLastCheckIn])
 
   const { planAssessments, nextAssessmentDate, showUpdatedBadge, showPhaseBadge } = useMemo(() => {
     const pa = assessments.filter((a) => a.planId === plan.id).sort((a, b) => b.date.localeCompare(a.date))
@@ -226,8 +428,13 @@ export default function Plan() {
       <div>
         <h2 className="text-base font-semibold text-gray-900 mb-3">训练项目</h2>
         <div className="space-y-3">
-          {plan.exercises.map((ex, i) => (
-            <ExerciseCard key={ex.id} exercise={ex} index={i} />
+          {exercisesWithLastCheckIn.map((item, i) => (
+            <ExerciseCard
+              key={item.exercise.id}
+              exercise={item.exercise}
+              lastCheckIn={item.lastCheckIn}
+              index={i}
+            />
           ))}
         </div>
       </div>

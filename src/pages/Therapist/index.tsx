@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard,
@@ -16,6 +16,14 @@ import {
   ImagePlus,
   Calendar,
   Clock,
+  ChevronDown,
+  SlidersHorizontal,
+  TrendingDown,
+  TrendingUp,
+  ArrowUpDown,
+  Filter,
+  X,
+  ZoomIn,
 } from 'lucide-react'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
@@ -69,6 +77,45 @@ function getNext7Days() {
 
 type CheckInWithExercise = CheckInRecord & { exercise?: Exercise }
 
+function getScoreColor(score: number) {
+  if (score < 60) return '#EF4444'
+  if (score <= 80) return '#FF8C42'
+  return '#34D399'
+}
+
+function ScoreRing({ score, size = 80 }: { score: number; size?: number }) {
+  const r = (size - 8) / 2
+  const circ = 2 * Math.PI * r
+  const offset = circ - (score / 100) * circ
+  const color = getScoreColor(score)
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#E5E7EB" strokeWidth={6} />
+        <motion.circle
+          cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color}
+          strokeWidth={6} strokeLinecap="round" strokeDasharray={circ}
+          initial={{ strokeDashoffset: circ }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 0.8, ease: 'easeOut' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-xl font-bold" style={{ color }}>{score}</span>
+      </div>
+    </div>
+  )
+}
+
+type SortType = 'score_asc' | 'score_desc' | 'date_asc' | 'date_desc'
+
+interface FilterState {
+  scoreThreshold: number
+  startDate: string
+  endDate: string
+  sortBy: SortType
+}
+
 export default function TherapistPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
 
@@ -108,9 +155,11 @@ export default function TherapistPage() {
 function FeedbackModal({
   checkIn,
   onClose,
+  onSuccess,
 }: {
   checkIn: CheckInWithExercise
   onClose: () => void
+  onSuccess?: () => void
 }) {
   const { addTherapistReview, plan } = useStore()
   const [comment, setComment] = useState('')
@@ -123,6 +172,7 @@ function FeedbackModal({
     setShowToast(true)
     setTimeout(() => {
       setShowToast(false)
+      onSuccess?.()
       onClose()
     }, 1500)
   }
@@ -193,88 +243,275 @@ function FeedbackModal({
   )
 }
 
-function CheckInRow({
+function CheckInCard({
   checkIn,
   isLowScore,
+  isExpanded,
+  onToggle,
   onFeedback,
 }: {
   checkIn: CheckInWithExercise
   isLowScore?: boolean
+  isExpanded: boolean
+  onToggle: () => void
   onFeedback: () => void
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="rounded-xl bg-white p-3 shadow-sm"
+      layout
+      className="overflow-hidden rounded-xl bg-white shadow-sm"
     >
-      <div className="flex items-center gap-3">
-        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-gray-100">
-          {checkIn.photoUrl ? (
-            <img src={checkIn.photoUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-gray-300">
-              <Camera className="h-6 w-6" />
-            </div>
-          )}
-          {isLowScore && (
-            <div className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#EF4444]">
-              <AlertCircle className="h-3 w-3 text-white" />
-            </div>
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-semibold text-gray-900">
-              {checkIn.exercise?.name || '未知动作'}
-            </p>
-            {checkIn.therapistFeedback && (
-              <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-orange-50 px-1.5 py-0.5 text-[10px] text-[#FF8C42]">
-                <MessageSquare className="h-3 w-3" />
-                已反馈
-              </span>
+      <motion.div
+        layout
+        className="p-3 cursor-pointer"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-3">
+          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-gray-100">
+            {checkIn.photoUrl ? (
+              <img src={checkIn.photoUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-gray-300">
+                <Camera className="h-6 w-6" />
+              </div>
+            )}
+            {isLowScore && (
+              <div className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#EF4444]">
+                <AlertCircle className="h-3 w-3 text-white" />
+              </div>
             )}
           </div>
-          <p className="mt-0.5 text-xs text-gray-400">{checkIn.date}</p>
-          <div className="mt-1.5 flex items-center gap-2">
-            <div className="flex items-center gap-0.5">
-              <Star className="h-3 w-3 fill-[#FF8C42] text-[#FF8C42]" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-gray-900">
+                {checkIn.exercise?.name || '未知动作'}
+              </p>
+              {checkIn.therapistFeedback && (
+                <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-orange-50 px-1.5 py-0.5 text-[10px] text-[#FF8C42]">
+                  <MessageSquare className="h-3 w-3" />
+                  已反馈
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-gray-400">{checkIn.date}</p>
+            <div className="mt-1.5 flex items-center gap-2">
+              <div className="flex items-center gap-0.5">
+                <Star className="h-3 w-3 fill-[#FF8C42] text-[#FF8C42]" />
+                <span className={cn(
+                  'text-xs font-medium',
+                  checkIn.aiScore >= 70 ? 'text-green-600' : 'text-[#EF4444]'
+                )}>
+                  {checkIn.aiScore}
+                </span>
+              </div>
               <span className={cn(
-                'text-xs font-medium',
-                checkIn.aiScore >= 70 ? 'text-green-600' : 'text-[#EF4444]'
+                'rounded-full px-1.5 py-0.5 text-[10px]',
+                checkIn.completed ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'
               )}>
-                {checkIn.aiScore}
+                {checkIn.completed ? '已完成' : '未完成'}
               </span>
             </div>
-            <span className={cn(
-              'rounded-full px-1.5 py-0.5 text-[10px]',
-              checkIn.completed ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'
-            )}>
-              {checkIn.completed ? '已完成' : '未完成'}
-            </span>
           </div>
+          <motion.div
+            animate={{ rotate: isExpanded ? 180 : 0 }}
+            transition={{ duration: 0.2 }}
+            className="shrink-0 text-gray-400"
+          >
+            <ChevronDown className="h-5 w-5" />
+          </motion.div>
         </div>
-        <button
-          onClick={onFeedback}
-          className={cn(
-            'shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-            isLowScore
-              ? 'bg-[#FF8C42] text-white hover:bg-[#e87a36]'
-              : 'bg-[#0EA5A0]/10 text-[#0EA5A0] hover:bg-[#0EA5A0]/20'
-          )}
-        >
-          添加反馈
+      </motion.div>
+
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 pb-4 pt-1 border-t border-gray-100">
+              <div className="mt-3 space-y-4">
+                {checkIn.photoUrl && (
+                  <div className="relative w-full overflow-hidden rounded-xl bg-gray-100" style={{ aspectRatio: '4/3' }}>
+                    <img src={checkIn.photoUrl} alt={checkIn.exercise?.name} className="h-full w-full object-cover" />
+                    <div className="absolute bottom-2 right-2 rounded-full bg-black/50 p-1.5 text-white backdrop-blur-sm">
+                      <ZoomIn className="h-4 w-4" />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-start gap-4">
+                  <ScoreRing score={checkIn.aiScore} size={72} />
+                  <div className="min-w-0 flex-1 pt-1">
+                    <p className="text-sm font-medium text-gray-900">AI 评分</p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-500">{checkIn.aiFeedback || '暂无AI评估'}</p>
+                  </div>
+                </div>
+
+                {checkIn.corrections && checkIn.corrections.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
+                      <AlertCircle className="h-3.5 w-3.5 text-[#FF8C42]" />
+                      纠正点
+                    </p>
+                    <div className="space-y-1.5">
+                      {checkIn.corrections.map((c, i) => (
+                        <div key={i} className="flex items-start gap-2 rounded-lg bg-[#FF8C42]/5 p-2">
+                          <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#FF8C42]/20 text-[10px] font-medium text-[#FF8C42]">
+                            {i + 1}
+                          </span>
+                          <span className="text-[11px] text-gray-600">{c}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {checkIn.therapistFeedback ? (
+                  <div className="rounded-lg bg-orange-50 p-3">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-[#FF8C42]">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      康复师评语
+                      {checkIn.therapistTimestamp && (
+                        <span className="ml-auto text-[10px] text-gray-400 font-normal">
+                          {checkIn.therapistTimestamp}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs leading-relaxed text-gray-700">{checkIn.therapistFeedback}</p>
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onFeedback() }}
+                    className={cn(
+                      'flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium transition-colors',
+                      isLowScore
+                        ? 'bg-[#FF8C42] text-white hover:bg-[#e87a36]'
+                        : 'bg-[#0EA5A0]/10 text-[#0EA5A0] hover:bg-[#0EA5A0]/20'
+                    )}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    添加康复师反馈
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
+function FilterPanel({
+  filters,
+  onFilterChange,
+  onClose,
+}: {
+  filters: FilterState
+  onFilterChange: (filters: FilterState) => void
+  onClose: () => void
+}) {
+  const sortOptions: { value: SortType; label: string; icon: typeof TrendingDown }[] = [
+    { value: 'score_asc', label: '分数从低到高', icon: TrendingDown },
+    { value: 'score_desc', label: '分数从高到低', icon: TrendingUp },
+    { value: 'date_asc', label: '日期从早到晚', icon: Calendar },
+    { value: 'date_desc', label: '日期从晚到早', icon: CalendarDays },
+  ]
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="rounded-xl bg-white p-4 shadow-sm"
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Filter className="h-4 w-4 text-[#0EA5A0]" />
+          <span className="text-sm font-semibold text-gray-900">筛选条件</span>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <X className="h-4 w-4" />
         </button>
       </div>
-      {checkIn.therapistFeedback && (
-        <div className="mt-3 rounded-lg bg-orange-50 p-2.5">
-          <div className="mb-1 flex items-center gap-1 text-[11px] font-medium text-[#FF8C42]">
-            <MessageSquare className="h-3 w-3" />
-            康复师反馈
+
+      <div className="space-y-4">
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <label className="text-xs font-medium text-gray-700">分数阈值</label>
+            <span className="text-xs font-bold text-[#FF8C42]">{'<'}{filters.scoreThreshold}分</span>
           </div>
-          <p className="text-xs leading-relaxed text-gray-700">{checkIn.therapistFeedback}</p>
+          <input
+            type="range"
+            min="40"
+            max="90"
+            step="5"
+            value={filters.scoreThreshold}
+            onChange={(e) => onFilterChange({ ...filters, scoreThreshold: Number(e.target.value) })}
+            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#FF8C42]"
+          />
+          <div className="mt-1 flex justify-between text-[10px] text-gray-400">
+            <span>40分</span>
+            <span>90分</span>
+          </div>
         </div>
-      )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">开始日期</label>
+            <input
+              type="date"
+              value={filters.startDate}
+              onChange={(e) => onFilterChange({ ...filters, startDate: e.target.value })}
+              className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-[#0EA5A0]"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">结束日期</label>
+            <input
+              type="date"
+              value={filters.endDate}
+              onChange={(e) => onFilterChange({ ...filters, endDate: e.target.value })}
+              className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-[#0EA5A0]"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-2 block text-xs font-medium text-gray-700">排序方式</label>
+          <div className="grid grid-cols-2 gap-2">
+            {sortOptions.map((opt) => {
+              const Icon = opt.icon
+              const isActive = filters.sortBy === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => onFilterChange({ ...filters, sortBy: opt.value })}
+                  className={cn(
+                    'flex items-center justify-center gap-1.5 rounded-lg py-2 text-[11px] font-medium transition-colors',
+                    isActive
+                      ? 'bg-[#0EA5A0] text-white'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full rounded-lg bg-[#0EA5A0] py-2 text-xs font-medium text-white hover:bg-[#0d9490] transition-colors"
+        >
+          应用筛选
+        </button>
+      </div>
     </motion.div>
   )
 }
@@ -282,15 +519,57 @@ function CheckInRow({
 function DashboardTab() {
   const { plan, user, therapists, getRecentCheckIns, getLowScoreCheckIns, checkIns } = useStore()
   const [feedbackCheckIn, setFeedbackCheckIn] = useState<CheckInWithExercise | null>(null)
-
-  const recentCheckIns = getRecentCheckIns(plan.id, 10)
-  const lowScoreCheckIns = getLowScoreCheckIns(plan.id, 70)
-  const assignedTherapist = therapists.find((t) => t.id === plan.therapistId)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [showFilter, setShowFilter] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   const today = new Date().toISOString().split('T')[0]
   const weekStart = new Date()
-  weekStart.setDate(weekStart.getDate() - 6)
-  const weekStartStr = weekStart.toISOString().split('T')[0]
+  weekStart.setDate(weekStart.getDate() - 30)
+  const defaultStartDate = weekStart.toISOString().split('T')[0]
+
+  const [filters, setFilters] = useState<FilterState>({
+    scoreThreshold: 70,
+    startDate: defaultStartDate,
+    endDate: today,
+    sortBy: 'score_asc',
+  })
+
+  const recentCheckIns = useMemo(() => {
+    void refreshKey
+    return getRecentCheckIns(plan.id, 10)
+  }, [plan.id, refreshKey, getRecentCheckIns])
+
+  const lowScoreCheckIns = useMemo(() => {
+    void refreshKey
+    const list = getLowScoreCheckIns(plan.id, filters.scoreThreshold)
+    const filtered = list.filter((c) => {
+      if (filters.startDate && c.date < filters.startDate) return false
+      if (filters.endDate && c.date > filters.endDate) return false
+      return true
+    })
+    const sorted = [...filtered].sort((a, b) => {
+      switch (filters.sortBy) {
+        case 'score_asc':
+          return a.aiScore - b.aiScore
+        case 'score_desc':
+          return b.aiScore - a.aiScore
+        case 'date_asc':
+          return a.date.localeCompare(b.date)
+        case 'date_desc':
+          return b.date.localeCompare(a.date)
+        default:
+          return 0
+      }
+    })
+    return sorted
+  }, [plan.id, filters, refreshKey, getLowScoreCheckIns])
+
+  const assignedTherapist = therapists.find((t) => t.id === plan.therapistId)
+
+  const weekStartDate = new Date()
+  weekStartDate.setDate(weekStartDate.getDate() - 6)
+  const weekStartStr = weekStartDate.toISOString().split('T')[0]
 
   const weekDates: string[] = []
   for (let i = 6; i >= 0; i--) {
@@ -331,6 +610,14 @@ function DashboardTab() {
     { label: '未完成训练占比', value: `${incompleteRatio}%`, color: 'text-green-600', bg: 'bg-green-50' },
   ]
 
+  const handleToggleExpand = (id: string) => {
+    setExpandedId(expandedId === id ? null : id)
+  }
+
+  const handleFeedbackSuccess = () => {
+    setRefreshKey((k) => k + 1)
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -20 }}
@@ -361,14 +648,39 @@ function DashboardTab() {
       </div>
 
       <div>
-        <h3 className="mb-2 flex items-center gap-1.5 text-sm font-bold text-gray-900">
-          <AlertCircle className="h-4 w-4 text-[#EF4444]" />
-          低分需关注动作
-          <span className="ml-1 rounded-full bg-[#EF4444] px-1.5 py-0.5 text-[10px] text-white">
-            {lowScoreCheckIns.length}
-          </span>
-        </h3>
-        <div className="space-y-2">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="flex items-center gap-1.5 text-sm font-bold text-gray-900">
+            <AlertCircle className="h-4 w-4 text-[#EF4444]" />
+            低分需关注动作
+            <span className="ml-1 rounded-full bg-[#EF4444] px-1.5 py-0.5 text-[10px] text-white">
+              {lowScoreCheckIns.length}
+            </span>
+          </h3>
+          <button
+            onClick={() => setShowFilter(!showFilter)}
+            className={cn(
+              'flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium transition-colors',
+              showFilter
+                ? 'bg-[#0EA5A0] text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            )}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            筛选
+          </button>
+        </div>
+
+        <AnimatePresence>
+          {showFilter && (
+            <FilterPanel
+              filters={filters}
+              onFilterChange={setFilters}
+              onClose={() => setShowFilter(false)}
+            />
+          )}
+        </AnimatePresence>
+
+        <div className="mt-2 space-y-2">
           {lowScoreCheckIns.length === 0 ? (
             <div className="rounded-xl bg-white p-6 text-center shadow-sm">
               <CheckCircle2 className="mx-auto h-8 w-8 text-green-400" />
@@ -376,10 +688,12 @@ function DashboardTab() {
             </div>
           ) : (
             lowScoreCheckIns.map((ci) => (
-              <CheckInRow
+              <CheckInCard
                 key={ci.id}
                 checkIn={ci}
                 isLowScore
+                isExpanded={expandedId === ci.id}
+                onToggle={() => handleToggleExpand(ci.id)}
                 onFeedback={() => setFeedbackCheckIn(ci)}
               />
             ))
@@ -400,9 +714,11 @@ function DashboardTab() {
             </div>
           ) : (
             recentCheckIns.map((ci) => (
-              <CheckInRow
+              <CheckInCard
                 key={ci.id}
                 checkIn={ci}
+                isExpanded={expandedId === ci.id}
+                onToggle={() => handleToggleExpand(ci.id)}
                 onFeedback={() => setFeedbackCheckIn(ci)}
               />
             ))
@@ -414,6 +730,7 @@ function DashboardTab() {
         <FeedbackModal
           checkIn={feedbackCheckIn}
           onClose={() => setFeedbackCheckIn(null)}
+          onSuccess={handleFeedbackSuccess}
         />
       )}
     </motion.div>
