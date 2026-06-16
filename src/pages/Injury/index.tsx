@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Calendar, FileText, AlertCircle, X, Upload } from 'lucide-react'
+import {
+  Plus, Calendar, FileText, AlertCircle, X, Upload,
+  Type, CheckCircle2,
+} from 'lucide-react'
 import { useStore } from '@/store'
 import type { InjuryRecord } from '@/types'
 
@@ -19,25 +22,121 @@ const SEVERITY_BADGE = {
 }
 const SEVERITY_LABEL = { mild: '轻度', moderate: '中度', severe: '重度' }
 
-const emptyForm = { bodyPart: '', injuryDate: '', description: '', severity: 'mild' as InjuryRecord['severity'], diagnosisReport: '' }
+const emptyForm = {
+  bodyPart: '',
+  injuryDate: '',
+  description: '',
+  severity: 'mild' as InjuryRecord['severity'],
+  diagnosisReport: '',
+}
+
+type ReportMode = 'file' | 'text'
+
+function DiagnosisReportDisplay({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false)
+
+  if (value.startsWith('FILE:')) {
+    const url = value.slice(5)
+    return (
+      <div className="mt-2 flex items-center gap-2">
+        <a href={url} target="_blank" rel="noreferrer">
+          <img
+            src={url}
+            alt="诊断报告"
+            className="h-20 w-20 rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-80 transition"
+          />
+        </a>
+        <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium" style={{ backgroundColor: '#FFF3E0', color: '#FF8C42' }}>
+          <FileText size={12} />
+          诊断报告
+        </span>
+      </div>
+    )
+  }
+
+  if (value.startsWith('TEXT:')) {
+    const text = value.slice(5)
+    const showExpand = text.length > 80
+    const displayText = expanded || !showExpand ? text : text.slice(0, 80) + '...'
+
+    return (
+      <div
+        className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 leading-relaxed cursor-pointer hover:bg-gray-100 transition"
+        onClick={() => setExpanded(!expanded)}
+      >
+        {displayText}
+        {showExpand && (
+          <span className="ml-1 text-xs font-medium" style={{ color: '#0EA5A0' }}>
+            {expanded ? '收起' : '展开'}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium" style={{ backgroundColor: '#FFF3E0', color: '#FF8C42' }}>
+      <FileText size={12} />
+      {value}
+    </div>
+  )
+}
 
 export default function Injury() {
   const { injuries, addInjury } = useStore()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(emptyForm)
+  const [reportMode, setReportMode] = useState<ReportMode>('file')
+  const [filePreview, setFilePreview] = useState<{ url: string; name: string } | null>(null)
+  const [showToast, setShowToast] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const url = URL.createObjectURL(file)
+    setFilePreview({ url, name: file.name })
+    setForm({ ...form, diagnosisReport: `FILE:${url}` })
+  }
+
+  const removeFile = () => {
+    if (filePreview) URL.revokeObjectURL(filePreview.url)
+    setFilePreview(null)
+    setForm({ ...form, diagnosisReport: '' })
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
 
   const handleSubmit = () => {
     if (!form.bodyPart || !form.injuryDate || !form.description) return
+
+    let diagnosisValue: string | undefined
+    if (reportMode === 'file' && filePreview) {
+      diagnosisValue = `FILE:${filePreview.url}`
+    } else if (reportMode === 'text' && form.diagnosisReport.trim()) {
+      diagnosisValue = `TEXT:${form.diagnosisReport.trim()}`
+    }
+
     addInjury({
       id: crypto.randomUUID(),
-      userId: '1',
+      userId: 'u001',
       bodyPart: form.bodyPart,
       injuryDate: form.injuryDate,
       description: form.description,
       severity: form.severity,
-      diagnosisReport: form.diagnosisReport || undefined,
+      diagnosisReport: diagnosisValue,
       createdAt: new Date().toISOString(),
     })
+
+    setForm(emptyForm)
+    setFilePreview(null)
+    setShowForm(false)
+    setShowToast(true)
+    setTimeout(() => setShowToast(false), 2500)
+  }
+
+  const handleCancel = () => {
+    if (filePreview) URL.revokeObjectURL(filePreview.url)
+    setFilePreview(null)
     setForm(emptyForm)
     setShowForm(false)
   }
@@ -56,6 +155,21 @@ export default function Injury() {
             {showForm ? '取消' : '添加伤病史'}
           </button>
         </div>
+
+        <AnimatePresence>
+          {showToast && (
+            <motion.div
+              initial={{ y: -60, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -60, opacity: 0 }}
+              className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-xl px-5 py-3 shadow-lg"
+              style={{ backgroundColor: '#10B981', color: 'white' }}
+            >
+              <CheckCircle2 size={18} />
+              <span className="text-sm font-medium">新伤病记录已添加，系统已自动生成康复计划</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {showForm && (
@@ -122,10 +236,77 @@ export default function Injury() {
 
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-600">诊断报告</label>
-                  <div className="flex cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-gray-300 py-6 text-gray-400 transition hover:border-[#0EA5A0] hover:text-[#0EA5A0]">
-                    <Upload size={20} className="mr-2" />
-                    <span className="text-sm">点击或拖拽上传诊断报告</span>
+                  <div className="mb-2 flex gap-2">
+                    <button
+                      onClick={() => setReportMode('file')}
+                      className={`flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                        reportMode === 'file'
+                          ? 'text-white'
+                          : 'border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100'
+                      }`}
+                      style={reportMode === 'file' ? { backgroundColor: '#0EA5A0' } : {}}
+                    >
+                      <Upload size={12} />上传文件
+                    </button>
+                    <button
+                      onClick={() => setReportMode('text')}
+                      className={`flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                        reportMode === 'text'
+                          ? 'text-white'
+                          : 'border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100'
+                      }`}
+                      style={reportMode === 'text' ? { backgroundColor: '#0EA5A0' } : {}}
+                    >
+                      <Type size={12} />输入内容
+                    </button>
                   </div>
+
+                  {reportMode === 'file' ? (
+                    <div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                      {filePreview ? (
+                        <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                          <img
+                            src={filePreview.url}
+                            alt="预览"
+                            className="h-[120px] w-[120px] rounded-lg border border-gray-200 object-cover"
+                          />
+                          <div className="flex flex-1 items-center gap-2 min-w-0">
+                            <FileText size={16} className="text-gray-400 flex-shrink-0" />
+                            <span className="text-sm text-gray-600 truncate">{filePreview.name}</span>
+                          </div>
+                          <button
+                            onClick={removeFile}
+                            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 transition"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-gray-300 py-6 text-gray-400 transition hover:border-[#0EA5A0] hover:text-[#0EA5A0]"
+                        >
+                          <Upload size={20} className="mr-2" />
+                          <span className="text-sm">点击或拖拽上传诊断报告</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <textarea
+                      value={form.diagnosisReport.startsWith('TEXT:') ? form.diagnosisReport.slice(5) : form.diagnosisReport}
+                      onChange={(e) => setForm({ ...form, diagnosisReport: e.target.value })}
+                      rows={4}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#0EA5A0] focus:outline-none"
+                      placeholder="请输入或粘贴诊断报告内容..."
+                    />
+                  )}
                 </div>
 
                 <div className="flex gap-3 pt-1">
@@ -137,7 +318,7 @@ export default function Injury() {
                     保存记录
                   </button>
                   <button
-                    onClick={() => { setForm(emptyForm); setShowForm(false) }}
+                    onClick={handleCancel}
                     className="flex-1 rounded-lg border border-gray-200 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
                   >
                     取消
@@ -178,10 +359,7 @@ export default function Injury() {
                   </div>
                   <p className="mt-2 text-sm text-gray-600 leading-relaxed">{injury.description}</p>
                   {injury.diagnosisReport && (
-                    <div className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium" style={{ backgroundColor: '#FFF3E0', color: '#FF8C42' }}>
-                      <FileText size={12} />
-                      {injury.diagnosisReport}
-                    </div>
+                    <DiagnosisReportDisplay value={injury.diagnosisReport} />
                   )}
                 </div>
               </motion.div>

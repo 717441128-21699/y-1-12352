@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, ImagePlus, Star, Video, ChevronRight } from 'lucide-react'
+import { Send, ImagePlus, Star, Video, ChevronRight, Copy, CheckCircle2, AlertCircle, Calendar, Clock } from 'lucide-react'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
-import type { ChatMessage, VideoAppointment } from '@/types'
+import type { ChatMessage, VideoAppointment, Therapist } from '@/types'
 
 const tabs = ['在线答疑', '视频预约', '我的预约'] as const
 type TabKey = (typeof tabs)[number]
@@ -67,7 +67,7 @@ export default function TherapistPage() {
         </div>
         <AnimatePresence mode="wait">
           {activeTab === '在线答疑' && <ChatTab key="chat" />}
-          {activeTab === '视频预约' && <BookingTab key="book" />}
+          {activeTab === '视频预约' && <BookingTab key="book" onSuccess={() => setActiveTab('我的预约')} />}
           {activeTab === '我的预约' && <MyAppointmentsTab key="appt" />}
         </AnimatePresence>
       </div>
@@ -79,12 +79,11 @@ function ChatTab() {
   const { messages, addMessage, user, therapists } = useStore()
   const [input, setInput] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
+  const therapist = therapists[0]
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
   }, [messages])
-
-  const therapist = therapists[0]
 
   const handleSend = () => {
     if (!input.trim()) return
@@ -98,14 +97,13 @@ function ChatTab() {
     addMessage(msg)
     setInput('')
     setTimeout(() => {
-      const reply: ChatMessage = {
+      addMessage({
         id: `msg_${Date.now()}_r`,
         senderId: therapist.id,
         senderType: 'therapist',
         content: autoReplies[Math.floor(Math.random() * autoReplies.length)],
         timestamp: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-      }
-      addMessage(reply)
+      })
     }, 1500)
   }
 
@@ -142,10 +140,7 @@ function ChatTab() {
           placeholder="输入消息..."
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
         />
-        <button
-          onClick={handleSend}
-          className="rounded-lg bg-[#0EA5A0] p-2 text-white shadow hover:bg-[#0d9490]"
-        >
+        <button onClick={handleSend} className="rounded-lg bg-[#0EA5A0] p-2 text-white shadow hover:bg-[#0d9490]">
           <Send className="h-4 w-4" />
         </button>
       </div>
@@ -153,44 +148,95 @@ function ChatTab() {
   )
 }
 
-function BookingTab() {
-  const { therapists, bookAppointment, user } = useStore()
+function BookingTab({ onSuccess }: { onSuccess: () => void }) {
+  const { isSlotBooked, getAvailableTherapist, bookAppointment, therapists } = useStore()
   const days = getNext7Days()
   const [selDay, setSelDay] = useState(days[0].date)
   const [selSlot, setSelSlot] = useState<string | null>(null)
-  const bookedSlots = ['9:30', '11:00', '14:00', '15:30']
-  const matched = selSlot ? therapists[Math.floor(Math.random() * therapists.length)] : null
+  const [successAppt, setSuccessAppt] = useState<VideoAppointment | null>(null)
+  const [noTherapist, setNoTherapist] = useState(false)
+  const [duplicateAlert, setDuplicateAlert] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const matched: Therapist | null = selSlot
+    ? getAvailableTherapist(selDay, selSlot, timeSlots.find((s) => s.start === selSlot)?.end || '')
+    : null
+
+  useEffect(() => {
+    setNoTherapist(selSlot ? matched === null : false)
+  }, [selSlot, matched])
+
+  const handleCopy = (link: string) => {
+    navigator.clipboard?.writeText(link)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   const handleBook = () => {
     if (!selSlot || !matched) return
     const slot = timeSlots.find((s) => s.start === selSlot)!
-    const appt: VideoAppointment = {
-      id: `va_${Date.now()}`,
-      userId: user.id,
-      therapistId: matched.id,
-      date: selDay,
-      startTime: slot.start,
-      endTime: slot.end,
-      meetingLink: `https://meeting.rehab-app.com/room/${Date.now()}`,
-      status: 'upcoming',
+    const result = bookAppointment(selDay, slot.start, slot.end)
+    if (result === null) {
+      setDuplicateAlert(true)
+      setTimeout(() => setDuplicateAlert(false), 3000)
+      return
     }
-    bookAppointment(appt)
+    setSuccessAppt(result)
     setSelSlot(null)
-    alert('预约成功！')
+  }
+
+  if (successAppt) {
+    const t = therapists.find((th) => th.id === successAppt.therapistId)
+    return (
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+        <div className="rounded-xl bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-2">
+            <CheckCircle2 className="h-6 w-6 text-green-500" />
+            <span className="text-lg font-bold text-gray-900">✅ 预约成功</span>
+          </div>
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#0EA5A0]/15 text-lg font-bold text-[#0EA5A0]">
+              {t?.name[0] ?? '?'}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-900">{t?.name ?? '康复师'}</p>
+              <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-500">
+                <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{successAppt.date}</span>
+                <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{successAppt.startTime}-{successAppt.endTime}</span>
+              </div>
+            </div>
+          </div>
+          <div className="mb-4 rounded-lg bg-gray-50 p-3">
+            <p className="mb-1.5 text-xs text-gray-500">会议链接</p>
+            <div className="flex items-center gap-2">
+              <span className="flex-1 break-all text-xs text-[#0EA5A0] underline">{successAppt.meetingLink}</span>
+              <button onClick={() => handleCopy(successAppt.meetingLink)} className="shrink-0 rounded-lg bg-[#0EA5A0]/10 p-1.5 text-[#0EA5A0] hover:bg-[#0EA5A0]/20">
+                <Copy className="h-4 w-4" />
+              </button>
+            </div>
+            {copied && <p className="mt-1 text-[10px] text-green-600">已复制</p>}
+          </div>
+          <button onClick={onSuccess} className="w-full rounded-xl bg-[#0EA5A0] py-3 text-sm font-medium text-white shadow hover:bg-[#0d9490] transition-colors">
+            查看我的预约
+          </button>
+        </div>
+      </motion.div>
+    )
   }
 
   return (
     <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
+      <AnimatePresence>
+        {duplicateAlert && (
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            <AlertCircle className="h-4 w-4 shrink-0" />该时段已被预约，请选择其他时段
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
         {days.map((d) => (
-          <button
-            key={d.date}
-            onClick={() => { setSelDay(d.date); setSelSlot(null) }}
-            className={cn(
-              'flex shrink-0 flex-col items-center rounded-xl px-3 py-2 text-xs transition-colors',
-              selDay === d.date ? 'bg-[#0EA5A0] text-white' : 'bg-white text-gray-600'
-            )}
-          >
+          <button key={d.date} onClick={() => { setSelDay(d.date); setSelSlot(null) }}
+            className={cn('flex shrink-0 flex-col items-center rounded-xl px-3 py-2 text-xs transition-colors', selDay === d.date ? 'bg-[#0EA5A0] text-white' : 'bg-white text-gray-600')}>
             <span className="font-medium">{d.label}</span>
             <span className="mt-0.5">{d.date.slice(5)}</span>
           </button>
@@ -198,57 +244,47 @@ function BookingTab() {
       </div>
       <div className="mb-4 grid grid-cols-4 gap-2">
         {timeSlots.map((s) => {
-          const isBooked = bookedSlots.includes(s.start)
-          const isSelected = selSlot === s.start
+          const booked = isSlotBooked(selDay, s.start)
+          const selected = selSlot === s.start
           return (
-            <button
-              key={s.start}
-              disabled={isBooked}
-              onClick={() => setSelSlot(s.start)}
-              className={cn(
-                'rounded-lg py-2 text-xs font-medium transition-colors',
-                isBooked && 'cursor-not-allowed bg-gray-100 text-gray-400',
-                !isBooked && !isSelected && 'bg-green-50 text-green-700 hover:bg-green-100',
-                !isBooked && isSelected && 'border-2 border-[#0EA5A0] bg-teal-50 text-[#0EA5A0]'
-              )}
-            >
+            <button key={s.start} disabled={booked} onClick={() => setSelSlot(s.start)}
+              className={cn('rounded-lg py-2 text-xs font-medium transition-colors', booked && 'cursor-not-allowed bg-gray-100 text-gray-400',
+                !booked && !selected && 'bg-green-50 text-green-700 hover:bg-green-100', !booked && selected && 'border-2 border-[#0EA5A0] bg-teal-50 text-[#0EA5A0]')}>
               {s.start}-{s.end}
             </button>
           )
         })}
       </div>
-      {matched && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-4 rounded-xl bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#0EA5A0]/15 text-lg font-bold text-[#0EA5A0]">
-              {matched.name[0]}
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-900">{matched.name}</span>
-                <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', levelMap[matched.seniorLevel].color)}>
-                  {levelMap[matched.seniorLevel].label}
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-gray-400">{matched.specialty.join(' · ')}</p>
-              <div className="mt-1 flex items-center gap-0.5">
-                {Array.from({ length: 5 }, (_, i) => (
-                  <Star key={i} className={cn('h-3 w-3', i < Math.round(matched.rating) ? 'fill-[#FF8C42] text-[#FF8C42]' : 'text-gray-300')} />
-                ))}
-                <span className="ml-1 text-xs text-gray-500">{matched.rating}</span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      )}
-      <button
-        onClick={handleBook}
-        disabled={!selSlot}
-        className={cn(
-          'w-full rounded-xl py-3 text-sm font-medium text-white shadow transition-colors',
-          selSlot ? 'bg-[#0EA5A0] hover:bg-[#0d9490]' : 'cursor-not-allowed bg-gray-300'
+      <AnimatePresence mode="wait">
+        {noTherapist && selSlot && (
+          <motion.div key="no" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="mb-4 flex items-center gap-2 rounded-xl bg-orange-50 p-4">
+            <AlertCircle className="h-5 w-5 shrink-0 text-orange-500" />
+            <span className="text-sm text-orange-700">该时段暂无空闲康复师</span>
+          </motion.div>
         )}
-      >
+        {matched && !noTherapist && (
+          <motion.div key="ok" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="mb-4 rounded-xl bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#0EA5A0]/15 text-lg font-bold text-[#0EA5A0]">{matched.name[0]}</div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-900">{matched.name}</span>
+                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', levelMap[matched.seniorLevel].color)}>{levelMap[matched.seniorLevel].label}</span>
+                </div>
+                <p className="mt-0.5 text-xs text-gray-400">{matched.specialty.join(' · ')}</p>
+                <div className="mt-1 flex items-center gap-0.5">
+                  {Array.from({ length: 5 }, (_, i) => (
+                    <Star key={i} className={cn('h-3 w-3', i < Math.round(matched.rating) ? 'fill-[#FF8C42] text-[#FF8C42]' : 'text-gray-300')} />
+                  ))}
+                  <span className="ml-1 text-xs text-gray-500">{matched.rating}</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <button onClick={handleBook} disabled={!selSlot || noTherapist}
+        className={cn('w-full rounded-xl py-3 text-sm font-medium text-white shadow transition-colors', selSlot && !noTherapist ? 'bg-[#0EA5A0] hover:bg-[#0d9490]' : 'cursor-not-allowed bg-gray-300')}>
         确认预约
       </button>
     </motion.div>
@@ -257,7 +293,19 @@ function BookingTab() {
 
 function MyAppointmentsTab() {
   const { appointments, therapists } = useStore()
-  const sorted = [...appointments].sort((a, b) => (a.status === 'upcoming' ? -1 : 1))
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  const sorted = [...appointments].sort((a, b) => {
+    const order = { upcoming: 0, in_progress: 1, completed: 2, cancelled: 3 } as const
+    const sd = order[a.status as keyof typeof order] - order[b.status as keyof typeof order]
+    return sd !== 0 ? sd : new Date(b.date).getTime() - new Date(a.date).getTime()
+  })
+
+  const handleCopy = (id: string, link: string) => {
+    navigator.clipboard?.writeText(link)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
 
   return (
     <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-3">
@@ -269,9 +317,7 @@ function MyAppointmentsTab() {
           <div key={a.id} className="rounded-xl bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0EA5A0]/15 text-sm font-bold text-[#0EA5A0]">
-                  {t?.name[0] ?? '?'}
-                </div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0EA5A0]/15 text-sm font-bold text-[#0EA5A0]">{t?.name[0] ?? '?'}</div>
                 <div>
                   <p className="text-sm font-semibold text-gray-900">{t?.name ?? '未知康复师'}</p>
                   <p className="text-xs text-gray-400">{a.date} {a.startTime}-{a.endTime}</p>
@@ -280,11 +326,26 @@ function MyAppointmentsTab() {
               <span className={cn('rounded-full px-2.5 py-1 text-[10px] font-medium', st.color)}>{st.label}</span>
             </div>
             {a.status === 'upcoming' && (
-              <button className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#0EA5A0] py-2 text-xs font-medium text-white hover:bg-[#0d9490]">
-                <Video className="h-3.5 w-3.5" />
-                进入会议
-                <ChevronRight className="h-3 w-3" />
-              </button>
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 space-y-3 overflow-hidden">
+                <div className="flex items-center gap-2">
+                  <a href={a.meetingLink} target="_blank" rel="noopener noreferrer" className="flex-1 break-all text-xs text-[#0EA5A0] underline">{a.meetingLink}</a>
+                  <div className="relative">
+                    <button onClick={() => handleCopy(a.id, a.meetingLink)} className="rounded-lg bg-[#0EA5A0]/10 p-1.5 text-[#0EA5A0] hover:bg-[#0EA5A0]/20">
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                    <AnimatePresence>
+                      {copiedId === a.id && (
+                        <motion.span initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                          className="absolute -top-7 right-0 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-[10px] text-white">已复制</motion.span>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+                <button onClick={() => window.open(a.meetingLink, '_blank')}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#0EA5A0] py-2 text-xs font-medium text-white hover:bg-[#0d9490] transition-colors">
+                  <Video className="h-3.5 w-3.5" />进入会议<ChevronRight className="h-3 w-3" />
+                </button>
+              </motion.div>
             )}
           </div>
         )

@@ -11,10 +11,12 @@ import {
   Clock,
   Bell,
   ChevronRight,
-  Shield,
+  Crown,
+  ArrowRight,
 } from 'lucide-react'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
+import { membershipConfigs } from '@/mock/data'
 
 const categoryConfig: Record<string, { label: string; color: string }> = {
   stretch: { label: '拉伸', color: 'bg-orange-400' },
@@ -49,19 +51,19 @@ const cardVariants = {
 }
 
 export default function Dashboard() {
-  const { user, plan, checkIns, notifications, markNotificationRead, setPath } = useStore()
+  const { user, plan, checkIns, notifications, markNotificationRead, setPath, getTodayAvgScore, getTodayCompletedCount, todaysDate, assessments } = useStore()
   const navigate = useNavigate()
 
   const todayExercises = useMemo(
     () =>
       plan.exercises.map((ex) => {
-        const ci = checkIns.find((c) => c.exerciseId === ex.id)
+        const ci = checkIns.find((c) => c.exerciseId === ex.id && c.planId === plan.id && c.date === todaysDate)
         return { ...ex, completed: ci?.completed ?? false }
       }),
-    [plan.exercises, checkIns]
+    [plan.exercises, checkIns, plan.id, todaysDate]
   )
 
-  const completedCount = todayExercises.filter((e) => e.completed).length
+  const completedCount = getTodayCompletedCount()
   const totalCount = todayExercises.length
   const percentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
 
@@ -70,12 +72,33 @@ export default function Dashboard() {
     [notifications]
   )
 
-  const avgAiScore = useMemo(() => {
-    const scored = checkIns.filter((c) => c.completed && c.aiScore > 0)
-    return scored.length > 0
-      ? Math.round(scored.reduce((s, c) => s + c.aiScore, 0) / scored.length)
-      : 0
-  }, [checkIns])
+  const avgAiScore = getTodayAvgScore()
+
+  const nextAssessmentDays = useMemo(() => {
+    if (assessments.length === 0) return 3
+    const last = [...assessments].sort((a, b) => b.date.localeCompare(a.date))[0]
+    const lastDate = new Date(last.date)
+    lastDate.setDate(lastDate.getDate() + 14)
+    const today = new Date()
+    const diff = Math.ceil((lastDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    return Math.max(0, diff)
+  }, [assessments])
+
+  const currentLevelIdx = membershipConfigs.findIndex((c) => c.level === user.membershipLevel)
+  const nextLevel = currentLevelIdx < membershipConfigs.length - 1 ? membershipConfigs[currentLevelIdx + 1] : null
+  const goldRequiredDays = membershipConfigs[2].requiredDays
+
+  const levelGradient = {
+    free: 'from-gray-400 via-gray-300 to-gray-500',
+    silver: 'from-[#C0C0C0] via-[#D8D8D8] to-[#E8E8E8]',
+    gold: 'from-[#FFD700] via-[#FFC000] to-[#FFA500]',
+  } as const
+
+  const levelLabel = { free: '免费会员', silver: '银卡会员', gold: '金卡会员' } as const
+  const progressPercent = nextLevel
+    ? Math.min((user.consecutiveDays / nextLevel.requiredDays) * 100, 100)
+    : 100
+  const textColorOnCard = user.membershipLevel === 'gold' ? 'text-gray-800' : 'text-gray-800'
 
   const pieData = [
     { name: 'done', value: completedCount },
@@ -86,8 +109,6 @@ export default function Dashboard() {
     setPath('/checkin')
     navigate('/checkin')
   }
-
-  const goldRequiredDays = 30
 
   return (
     <div className="min-h-screen bg-gray-50 pb-8">
@@ -199,37 +220,62 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-gray-300 via-gray-200 to-gray-400 p-5 shadow-sm">
+        <motion.div
+          key={user.membershipLevel}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className={cn(
+            'mb-5 overflow-hidden rounded-2xl p-5 shadow-sm bg-gradient-to-br',
+            levelGradient[user.membershipLevel]
+          )}
+        >
           <div className="mb-3 flex items-center gap-2">
-            <Shield className="h-5 w-5 text-gray-700" />
-            <span className="text-sm font-semibold text-gray-800">银卡会员</span>
+            <Crown className="h-5 w-5 text-gray-700" />
+            <span className="text-sm font-semibold text-gray-800">{levelLabel[user.membershipLevel]}</span>
+            {user.membershipLevel === 'gold' && <span className="text-xs font-medium text-gray-700">✨ 最高等级</span>}
           </div>
           <div className="mb-3 flex items-baseline gap-1">
             <span className="text-3xl font-bold text-gray-800">{user.consecutiveDays}</span>
-            <span className="text-sm text-gray-600">天连续打卡</span>
+            <span className="text-sm text-gray-700">天连续打卡</span>
           </div>
-          <div>
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-xs text-gray-600">升级金卡进度</span>
-              <span className="text-xs font-medium text-gray-700">
-                {user.consecutiveDays}/{goldRequiredDays}天
-              </span>
+          {nextLevel ? (
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs text-gray-700">
+                  升级{levelLabel[nextLevel.level]}进度
+                </span>
+                <span className="text-xs font-medium text-gray-800">
+                  {user.consecutiveDays}/{nextLevel.requiredDays}天
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-gray-400/40">
+                <div
+                  className={cn(
+                    'h-full rounded-full',
+                    user.membershipLevel === 'silver' ? 'bg-gradient-to-r from-[#FFD700] to-[#FFA500]' : 'bg-gradient-to-r from-gray-500 to-gray-700'
+                  )}
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              <button
+                onClick={() => { setPath('/membership'); navigate('/membership') }}
+                className="mt-3 flex items-center gap-1 text-xs font-medium text-gray-700 hover:text-gray-900"
+              >
+                查看会员权益 <ArrowRight className="h-3 w-3" />
+              </button>
             </div>
-            <div className="h-2 rounded-full bg-gray-400/40">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-gray-600 to-gray-800"
-                style={{ width: `${(user.consecutiveDays / goldRequiredDays) * 100}%` }}
-              />
-            </div>
-          </div>
-        </div>
+          ) : (
+            <p className="text-xs text-gray-700">您已享受最高等级会员权益</p>
+          )}
+        </motion.div>
 
         <div className="grid grid-cols-2 gap-3">
           {[
             { icon: Flame, label: '连续天数', value: user.consecutiveDays, color: 'text-[#FF8C42]' },
             { icon: CalendarCheck, label: '累计打卡', value: checkIns.length, color: 'text-[#0EA5A0]' },
             { icon: Brain, label: 'AI平均分', value: avgAiScore, color: 'text-purple-500' },
-            { icon: Clock, label: '距下次评估', value: '3天', color: 'text-[#0EA5A0]' },
+            { icon: Clock, label: '距下次评估', value: nextAssessmentDays + '天', color: 'text-[#0EA5A0]' },
           ].map((stat) => (
             <div
               key={stat.label}

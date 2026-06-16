@@ -1,10 +1,30 @@
 import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts'
-import { ClipboardCheck, Star, TrendingUp, TrendingDown, ChevronRight } from 'lucide-react'
+import {
+  ClipboardCheck,
+  Star,
+  TrendingUp,
+  TrendingDown,
+  ChevronRight,
+  CalendarDays,
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+} from 'lucide-react'
 import { useStore } from '@/store'
+import { useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import type { StageAssessment } from '@/types'
+
+interface PlanChangeInfo {
+  phaseAdvanced: boolean
+  periodExtended: boolean
+  newPhase: number
+  newEndDate: string
+  oldPhase: number
+  oldEndDate: string
+}
 
 const painEmojis = ['😊', '🙂', '😐', '😕', '😟', '😧', '😦', '😨', '😱', '😖', '💀']
 
@@ -39,6 +59,15 @@ function generateAdjustment(overall: number, pain: number, fn: number, rom: numb
   return lines.join('；')
 }
 
+function daysUntilNextAssessment(lastDateStr: string): number {
+  const last = new Date(lastDateStr)
+  last.setDate(last.getDate() + 14)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const diff = Math.ceil((last.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+  return Math.max(0, diff)
+}
+
 function StarRating({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   return (
     <div className="flex gap-1">
@@ -70,7 +99,7 @@ function RangeSlider({ value, onChange, max = 10 }: { value: number; onChange: (
   )
 }
 
-function AssessmentCard({ assessment, prevScore }: { assessment: StageAssessment; prevScore?: number }) {
+function AssessmentCard({ assessment, prevScore, planPhase }: { assessment: StageAssessment; prevScore?: number; planPhase?: number }) {
   const radarData = useMemo(() => toRadarData(assessment), [assessment])
   const diff = prevScore != null ? assessment.overallScore - prevScore : undefined
 
@@ -81,7 +110,14 @@ function AssessmentCard({ assessment, prevScore }: { assessment: StageAssessment
       className="rounded-2xl bg-white p-5 shadow-sm"
     >
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-sm text-gray-500">{assessment.date}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500">{assessment.date}</span>
+          {planPhase && (
+            <span className="text-xs rounded-full bg-teal-50 text-[#0EA5A0] px-2 py-0.5 font-medium">
+              第{planPhase}阶段
+            </span>
+          )}
+        </div>
         {diff != null && (
           <span className={cn('flex items-center gap-1 text-sm font-medium', diff >= 0 ? 'text-[#34D399]' : 'text-red-500')}>
             {diff >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
@@ -107,11 +143,74 @@ function AssessmentCard({ assessment, prevScore }: { assessment: StageAssessment
   )
 }
 
+function PlanChangeBadges({ changeInfo }: { changeInfo: PlanChangeInfo }) {
+  const hasAnyChange = changeInfo.phaseAdvanced || changeInfo.periodExtended
+
+  if (!hasAnyChange) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex items-center gap-2 rounded-xl bg-gray-50 p-3"
+      >
+        <CheckCircle2 className="h-5 w-5 text-gray-400" />
+        <span className="text-sm text-gray-600 font-medium">当前方案维持不变</span>
+      </motion.div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {changeInfo.phaseAdvanced && (
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="flex items-center gap-2 rounded-xl bg-green-50 p-3"
+        >
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
+            <TrendingUp className="h-4 w-4 text-green-600" />
+          </div>
+          <div>
+            <span className="inline-flex items-center rounded-full bg-green-500 px-2.5 py-0.5 text-xs font-semibold text-white">
+              阶段推进
+            </span>
+            <p className="mt-0.5 text-sm text-green-800 font-medium">
+              康复方案已推进到第 {changeInfo.newPhase} 阶段
+            </p>
+          </div>
+        </motion.div>
+      )}
+      {changeInfo.periodExtended && (
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1 }}
+          className="flex items-center gap-2 rounded-xl bg-orange-50 p-3"
+        >
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100">
+            <CalendarDays className="h-4 w-4 text-orange-600" />
+          </div>
+          <div>
+            <span className="inline-flex items-center rounded-full bg-orange-500 px-2.5 py-0.5 text-xs font-semibold text-white">
+              周期延长
+            </span>
+            <p className="mt-0.5 text-sm text-orange-800 font-medium">
+              康复周期已延长 2 周，新结束日期为 {changeInfo.newEndDate}
+            </p>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  )
+}
+
 export default function Assessment() {
   const { assessments, submitAssessment, isAssessmentDue, plan } = useStore()
+  const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [latestResult, setLatestResult] = useState<StageAssessment | null>(null)
+  const [planChangeInfo, setPlanChangeInfo] = useState<PlanChangeInfo | null>(null)
 
   const [painScore, setPainScore] = useState(3)
   const [functionScore, setFunctionScore] = useState(3)
@@ -137,7 +236,8 @@ export default function Assessment() {
       previousScore: prevScore,
     }
 
-    submitAssessment(newAssessment)
+    const changeInfo = submitAssessment(newAssessment)
+    setPlanChangeInfo(changeInfo)
     setLatestResult(newAssessment)
     setShowForm(false)
     setSubmitted(true)
@@ -147,6 +247,11 @@ export default function Assessment() {
     () => [...assessments].sort((a, b) => b.date.localeCompare(a.date)),
     [assessments]
   )
+
+  const lastAssessmentDate = sortedAssessments.length > 0
+    ? sortedAssessments[0].date
+    : new Date().toISOString().split('T')[0]
+  const daysRemaining = daysUntilNextAssessment(lastAssessmentDate)
 
   return (
     <div className="min-h-screen bg-gray-50 pb-8">
@@ -161,13 +266,33 @@ export default function Assessment() {
               animate={{ opacity: 1, scale: 1 }}
               className="mb-6 rounded-2xl bg-gradient-to-r from-[#34D399] to-[#0EA5A0] p-5 shadow-sm"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 mb-4">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20">
                   <ClipboardCheck className="h-5 w-5 text-white" />
                 </div>
                 <div>
                   <p className="text-lg font-semibold text-white">评估已完成</p>
                   <p className="text-sm text-white/80">第{plan.phase}阶段评估已成功提交</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm text-white/90">
+                  <span className="flex items-center gap-1">
+                    <CheckCircle2 className="h-4 w-4" />
+                    当前阶段：第 {plan.phase} 阶段
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-white/90">
+                  <span className="flex items-center gap-1">
+                    <CalendarDays className="h-4 w-4" />
+                    计划结束：{plan.endDate}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-white/90">
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-4 w-4" />
+                    距离下次评估还剩 {daysRemaining} 天
+                  </span>
                 </div>
               </div>
             </motion.div>
@@ -257,14 +382,34 @@ export default function Assessment() {
           </motion.div>
         )}
 
-        {submitted && latestResult && !showForm && (
+        {submitted && latestResult && planChangeInfo && !showForm && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="mb-6"
           >
             <h2 className="mb-3 text-base font-semibold text-gray-900">评估报告</h2>
-            <AssessmentCard assessment={latestResult} prevScore={latestResult.previousScore} />
+
+            <div className="mb-4">
+              <PlanChangeBadges changeInfo={planChangeInfo} />
+            </div>
+
+            <AssessmentCard
+              assessment={latestResult}
+              prevScore={latestResult.previousScore}
+              planPhase={planChangeInfo.newPhase}
+            />
+
+            <motion.button
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              onClick={() => navigate('/plan')}
+              className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl bg-white border-2 border-[#0EA5A0] py-3 text-base font-semibold text-[#0EA5A0] shadow-sm transition-all hover:bg-teal-50"
+            >
+              查看更新后的康复计划
+              <ArrowRight className="h-5 w-5" />
+            </motion.button>
           </motion.div>
         )}
 

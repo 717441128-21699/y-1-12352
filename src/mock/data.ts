@@ -20,6 +20,7 @@ export const currentUser: User = {
   membershipLevel: 'silver',
   consecutiveDays: 18,
   joinDate: '2026-05-01',
+  paidUpgrade: false,
 }
 
 export const injuryRecords: InjuryRecord[] = [
