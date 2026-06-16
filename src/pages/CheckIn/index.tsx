@@ -1,8 +1,8 @@
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, AlertTriangle, Trophy, RotateCcw, Home, ArrowRight, Check } from 'lucide-react'
+import { Camera, AlertTriangle, Trophy, RotateCcw, Home, ArrowRight, Check, Loader2 } from 'lucide-react'
 import { useStore } from '@/store'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useBeforeUnload } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 
 const categoryConfig: Record<string, { label: string; color: string }> = {
@@ -50,16 +50,13 @@ function ScoreRing({ score, size = 80 }: { score: number; size?: number }) {
 }
 
 export default function CheckIn() {
-  const { plan, checkIns, completeCheckIn, finishDayTraining, user, getTodayAvgScore, todaysDate } = useStore()
+  const { plan, user, finishDayTraining, getTodayAvgScore, getTodayCompletedCount, analyzeExercise, saveCheckIn, todaysDate } = useStore()
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const todayExercises = useMemo(() => plan.exercises, [plan.exercises])
   const total = todayExercises.length
-  const completedCount = useMemo(
-    () => checkIns.filter((c) => c.date === todaysDate && c.planId === plan.id && c.completed).length,
-    [checkIns, todaysDate, plan.id]
-  )
+  const completedCount = getTodayCompletedCount()
 
   const [currentIdx, setCurrentIdx] = useState(0)
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
@@ -70,26 +67,17 @@ export default function CheckIn() {
   const currentExercise = todayExercises[currentIdx]
   const cat = categoryConfig[currentExercise?.category] ?? categoryConfig.strength
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click()
-  }
+  useBeforeUnload(() => {
+    if (photoUrl) URL.revokeObjectURL(photoUrl)
+  })
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const url = URL.createObjectURL(file)
-    setPhotoUrl(url)
-    setIsAnalyzing(true)
-    setAnalysisResult(null)
+  useEffect(() => {
+    return () => {
+      if (photoUrl) URL.revokeObjectURL(photoUrl)
+    }
+  }, [photoUrl])
 
-    setTimeout(() => {
-      const result = completeCheckIn(currentExercise.id, url)
-      setAnalysisResult(result)
-      setIsAnalyzing(false)
-    }, 1800)
-  }
-
-  const handleRetake = () => {
+  const resetLocalState = () => {
     if (photoUrl) URL.revokeObjectURL(photoUrl)
     setPhotoUrl(null)
     setAnalysisResult(null)
@@ -97,17 +85,41 @@ export default function CheckIn() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleComplete = () => {
+  const handleUploadClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const url = URL.createObjectURL(file)
+    setPhotoUrl(url)
+    setIsAnalyzing(true)
+    setAnalysisResult(null)
+
+    await new Promise(resolve => setTimeout(resolve, 1800))
+
+    const result = analyzeExercise(currentExercise.id, url)
+    setAnalysisResult(result)
+    setIsAnalyzing(false)
+  }
+
+  const handleRetake = () => {
+    resetLocalState()
+  }
+
+  const handleComplete = async () => {
+    if (!analysisResult || !photoUrl) return
+
+    saveCheckIn(currentExercise.id, photoUrl, analysisResult)
+
     const isLast = currentIdx >= total - 1
     if (isLast) {
       finishDayTraining()
+      resetLocalState()
       setShowCelebration(true)
     } else {
-      if (photoUrl) URL.revokeObjectURL(photoUrl)
-      setPhotoUrl(null)
-      setAnalysisResult(null)
-      setIsAnalyzing(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      resetLocalState()
       setCurrentIdx((i) => i + 1)
     }
   }
@@ -174,7 +186,7 @@ export default function CheckIn() {
             <motion.div
               className="h-full rounded-full bg-[#0EA5A0]"
               initial={{ width: 0 }}
-              animate={{ width: `${((currentIdx + (analysisResult ? 1 : 0)) / total) * 100}%` }}
+              animate={{ width: `${(completedCount / total) * 100}%` }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
             />
           </div>
@@ -318,7 +330,8 @@ export default function CheckIn() {
                     </button>
                     <button
                       onClick={handleComplete}
-                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#0EA5A0] px-4 py-3.5 text-sm font-medium text-white shadow-md transition-all hover:bg-[#0d9490] active:scale-[0.98]"
+                      disabled={!analysisResult}
+                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#0EA5A0] px-4 py-3.5 text-sm font-medium text-white shadow-md transition-all hover:bg-[#0d9490] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {currentIdx >= total - 1 ? (
                         <>

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bell } from 'lucide-react'
@@ -7,7 +8,14 @@ import { useStore } from '@/store'
 
 export default function AppLayout() {
   const notifications = useStore((s) => s.notifications)
+  const hydrated = useStore((s) => s.hydrated)
+  const initializeTodayCheckIns = useStore((s) => s.initializeTodayCheckIns)
   const unreadCount = notifications.filter((n) => !n.read).length
+
+  useEffect(() => {
+    if (hydrated) return
+    initializeTodayCheckIns()
+  }, [hydrated, initializeTodayCheckIns])
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">

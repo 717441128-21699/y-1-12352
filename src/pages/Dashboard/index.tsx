@@ -51,7 +51,7 @@ const cardVariants = {
 }
 
 export default function Dashboard() {
-  const { user, plan, checkIns, notifications, markNotificationRead, setPath, getTodayAvgScore, getTodayCompletedCount, todaysDate, assessments } = useStore()
+  const { user, plan, checkIns, notifications, markNotificationRead, setPath, todaysDate, assessments } = useStore()
   const navigate = useNavigate()
 
   const todayExercises = useMemo(
@@ -63,7 +63,10 @@ export default function Dashboard() {
     [plan.exercises, checkIns, plan.id, todaysDate]
   )
 
-  const completedCount = getTodayCompletedCount()
+  const completedCount = useMemo(() => {
+    return checkIns.filter((c) => c.date === todaysDate && c.completed).length
+  }, [checkIns, todaysDate])
+
   const totalCount = todayExercises.length
   const percentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
 
@@ -72,7 +75,11 @@ export default function Dashboard() {
     [notifications]
   )
 
-  const avgAiScore = getTodayAvgScore()
+  const avgAiScore = useMemo(() => {
+    const done = checkIns.filter((c) => c.date === todaysDate && c.completed && c.aiScore > 0)
+    if (done.length === 0) return 0
+    return Math.round(done.reduce((s, c) => s + c.aiScore, 0) / done.length)
+  }, [checkIns, todaysDate])
 
   const nextAssessmentDays = useMemo(() => {
     if (assessments.length === 0) return 3
