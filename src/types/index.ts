@@ -58,6 +58,24 @@ export interface CheckInRecord {
   aiFeedback: string
   corrections: string[]
   completed: boolean
+  therapistFeedback?: string
+  therapistId?: string
+  therapistTimestamp?: string
+}
+
+export interface TherapistCheckInReview {
+  checkInId: string
+  userId: string
+  exerciseId: string
+  date: string
+  exerciseName: string
+  photoUrl: string
+  aiScore: number
+  aiFeedback: string
+  corrections: string[]
+  therapistId: string
+  comment: string
+  timestamp: string
 }
 
 export interface StageAssessment {

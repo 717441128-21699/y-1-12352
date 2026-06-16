@@ -1,12 +1,34 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, ImagePlus, Star, Video, ChevronRight, Copy, CheckCircle2, AlertCircle, Calendar, Clock } from 'lucide-react'
+import {
+  LayoutDashboard,
+  MessageCircle,
+  Video,
+  CalendarDays,
+  Camera,
+  Star,
+  AlertCircle,
+  Send,
+  Copy,
+  CheckCircle2,
+  MessageSquare,
+  ChevronRight,
+  ImagePlus,
+  Calendar,
+  Clock,
+} from 'lucide-react'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
-import type { ChatMessage, VideoAppointment, Therapist } from '@/types'
+import type { ChatMessage, VideoAppointment, Therapist, CheckInRecord, Exercise } from '@/types'
 
-const tabs = ['在线答疑', '视频预约', '我的预约'] as const
-type TabKey = (typeof tabs)[number]
+type TabKey = 'dashboard' | 'chat' | 'booking' | 'appointments'
+
+const tabs: { key: TabKey; label: string; icon: typeof LayoutDashboard }[] = [
+  { key: 'dashboard', label: '康复师看板', icon: LayoutDashboard },
+  { key: 'chat', label: '在线答疑', icon: MessageCircle },
+  { key: 'booking', label: '视频预约', icon: Video },
+  { key: 'appointments', label: '我的预约', icon: CalendarDays },
+]
 
 const timeSlots = Array.from({ length: 16 }, (_, i) => {
   const h = 9 + Math.floor(i / 2)
@@ -41,45 +63,368 @@ function getNext7Days() {
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date()
     d.setDate(d.getDate() + i)
-    return { date: d.toISOString().slice(0, 10), label: i === 0 ? '今天' : ['周日','周一','周二','周三','周四','周五','周六'][d.getDay()] }
+    return { date: d.toISOString().slice(0, 10), label: i === 0 ? '今天' : ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()] }
   })
 }
 
+type CheckInWithExercise = CheckInRecord & { exercise?: Exercise }
+
 export default function TherapistPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>('在线答疑')
+  const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
+
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
       <div className="mx-auto max-w-md px-4 pt-4">
         <h1 className="mb-4 text-xl font-bold text-gray-900">康复师互动</h1>
         <div className="mb-4 flex rounded-xl bg-white p-1 shadow-sm">
-          {tabs.map((t) => (
-            <button
-              key={t}
-              onClick={() => setActiveTab(t)}
-              className={cn(
-                'flex-1 rounded-lg py-2 text-sm font-medium transition-colors',
-                activeTab === t ? 'bg-[#0EA5A0] text-white shadow' : 'text-gray-500 hover:text-gray-700'
-              )}
-            >
-              {t}
-            </button>
-          ))}
+          {tabs.map((t) => {
+            const Icon = t.icon
+            return (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={cn(
+                  'flex flex-1 flex-col items-center gap-0.5 rounded-lg py-2 text-[10px] font-medium transition-colors',
+                  activeTab === t.key ? 'bg-[#0EA5A0] text-white shadow' : 'text-gray-500 hover:text-gray-700'
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {t.label}
+              </button>
+            )
+          })}
         </div>
         <AnimatePresence mode="wait">
-          {activeTab === '在线答疑' && <ChatTab key="chat" />}
-          {activeTab === '视频预约' && <BookingTab key="book" onSuccess={() => setActiveTab('我的预约')} />}
-          {activeTab === '我的预约' && <MyAppointmentsTab key="appt" />}
+          {activeTab === 'dashboard' && <DashboardTab key="dashboard" />}
+          {activeTab === 'chat' && <ChatTab key="chat" />}
+          {activeTab === 'booking' && <BookingTab key="book" onSuccess={() => setActiveTab('appointments')} />}
+          {activeTab === 'appointments' && <MyAppointmentsTab key="appt" />}
         </AnimatePresence>
       </div>
     </div>
   )
 }
 
+function FeedbackModal({
+  checkIn,
+  onClose,
+}: {
+  checkIn: CheckInWithExercise
+  onClose: () => void
+}) {
+  const { addTherapistReview, plan } = useStore()
+  const [comment, setComment] = useState('')
+  const [showToast, setShowToast] = useState(false)
+
+  const handleSubmit = () => {
+    if (!comment.trim()) return
+    addTherapistReview(checkIn.id, plan.therapistId, checkIn.exercise?.name || '', comment.trim())
+    setComment('')
+    setShowToast(true)
+    setTimeout(() => {
+      setShowToast(false)
+      onClose()
+    }, 1500)
+  }
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ y: 100, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 100, opacity: 0 }}
+          className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-lg font-bold text-gray-900">添加康复师反馈</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              ✕
+            </button>
+          </div>
+          {checkIn.exercise && (
+            <div className="mb-4 rounded-lg bg-gray-50 p-3">
+              <p className="text-sm font-medium text-gray-900">{checkIn.exercise.name}</p>
+              <p className="mt-0.5 text-xs text-gray-500">{checkIn.date} · AI评分: {checkIn.aiScore}</p>
+            </div>
+          )}
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="请输入反馈意见..."
+            rows={4}
+            className="w-full resize-none rounded-lg border border-gray-200 p-3 text-sm outline-none focus:border-[#0EA5A0]"
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={!comment.trim()}
+            className={cn(
+              'mt-4 w-full rounded-xl py-3 text-sm font-medium text-white transition-colors',
+              comment.trim() ? 'bg-[#0EA5A0] hover:bg-[#0d9490]' : 'cursor-not-allowed bg-gray-300'
+            )}
+          >
+            提交反馈
+          </button>
+          <AnimatePresence>
+            {showToast && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="absolute inset-x-0 top-1/2 flex justify-center"
+              >
+                <div className="flex items-center gap-2 rounded-full bg-gray-900/90 px-4 py-2 text-sm text-white">
+                  <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  反馈提交成功
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  )
+}
+
+function CheckInRow({
+  checkIn,
+  isLowScore,
+  onFeedback,
+}: {
+  checkIn: CheckInWithExercise
+  isLowScore?: boolean
+  onFeedback: () => void
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-xl bg-white p-3 shadow-sm"
+    >
+      <div className="flex items-center gap-3">
+        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-gray-100">
+          {checkIn.photoUrl ? (
+            <img src={checkIn.photoUrl} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-gray-300">
+              <Camera className="h-6 w-6" />
+            </div>
+          )}
+          {isLowScore && (
+            <div className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#EF4444]">
+              <AlertCircle className="h-3 w-3 text-white" />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-semibold text-gray-900">
+              {checkIn.exercise?.name || '未知动作'}
+            </p>
+            {checkIn.therapistFeedback && (
+              <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-orange-50 px-1.5 py-0.5 text-[10px] text-[#FF8C42]">
+                <MessageSquare className="h-3 w-3" />
+                已反馈
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-gray-400">{checkIn.date}</p>
+          <div className="mt-1.5 flex items-center gap-2">
+            <div className="flex items-center gap-0.5">
+              <Star className="h-3 w-3 fill-[#FF8C42] text-[#FF8C42]" />
+              <span className={cn(
+                'text-xs font-medium',
+                checkIn.aiScore >= 70 ? 'text-green-600' : 'text-[#EF4444]'
+              )}>
+                {checkIn.aiScore}
+              </span>
+            </div>
+            <span className={cn(
+              'rounded-full px-1.5 py-0.5 text-[10px]',
+              checkIn.completed ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'
+            )}>
+              {checkIn.completed ? '已完成' : '未完成'}
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={onFeedback}
+          className={cn(
+            'shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+            isLowScore
+              ? 'bg-[#FF8C42] text-white hover:bg-[#e87a36]'
+              : 'bg-[#0EA5A0]/10 text-[#0EA5A0] hover:bg-[#0EA5A0]/20'
+          )}
+        >
+          添加反馈
+        </button>
+      </div>
+      {checkIn.therapistFeedback && (
+        <div className="mt-3 rounded-lg bg-orange-50 p-2.5">
+          <div className="mb-1 flex items-center gap-1 text-[11px] font-medium text-[#FF8C42]">
+            <MessageSquare className="h-3 w-3" />
+            康复师反馈
+          </div>
+          <p className="text-xs leading-relaxed text-gray-700">{checkIn.therapistFeedback}</p>
+        </div>
+      )}
+    </motion.div>
+  )
+}
+
+function DashboardTab() {
+  const { plan, user, therapists, getRecentCheckIns, getLowScoreCheckIns, checkIns } = useStore()
+  const [feedbackCheckIn, setFeedbackCheckIn] = useState<CheckInWithExercise | null>(null)
+
+  const recentCheckIns = getRecentCheckIns(plan.id, 10)
+  const lowScoreCheckIns = getLowScoreCheckIns(plan.id, 70)
+  const assignedTherapist = therapists.find((t) => t.id === plan.therapistId)
+
+  const today = new Date().toISOString().split('T')[0]
+  const weekStart = new Date()
+  weekStart.setDate(weekStart.getDate() - 6)
+  const weekStartStr = weekStart.toISOString().split('T')[0]
+
+  const weekDates: string[] = []
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    weekDates.push(d.toISOString().split('T')[0])
+  }
+
+  const weekCheckInDays = new Set(
+    checkIns
+      .filter((c) => c.planId === plan.id && c.completed && c.date >= weekStartStr && c.date <= today)
+      .map((c) => c.date)
+  ).size
+
+  const scoredCheckIns = checkIns.filter(
+    (c) => c.planId === plan.id && c.completed && c.aiScore > 0
+  )
+  const avgAIScore =
+    scoredCheckIns.length > 0
+      ? Math.round(scoredCheckIns.reduce((s, c) => s + c.aiScore, 0) / scoredCheckIns.length)
+      : 0
+
+  const pendingFeedbackCount = checkIns.filter(
+    (c) => c.planId === plan.id && c.completed && c.aiScore > 0 && !c.therapistFeedback
+  ).length
+
+  const todayTotal = checkIns.filter((c) => c.planId === plan.id && c.date === today).length
+  const todayCompleted = checkIns.filter(
+    (c) => c.planId === plan.id && c.date === today && c.completed
+  ).length
+  const incompleteRatio =
+    todayTotal > 0 ? Math.round(((todayTotal - todayCompleted) / todayTotal) * 100) : 0
+
+  const stats = [
+    { label: '本周打卡天数', value: `${weekCheckInDays}/7`, color: 'text-[#0EA5A0]', bg: 'bg-[#0EA5A0]/10' },
+    { label: '平均AI分数', value: `${avgAIScore}`, color: 'text-[#FF8C42]', bg: 'bg-[#FF8C42]/10' },
+    { label: '待反馈动作数', value: `${pendingFeedbackCount}`, color: 'text-[#EF4444]', bg: 'bg-[#EF4444]/10' },
+    { label: '未完成训练占比', value: `${incompleteRatio}%`, color: 'text-green-600', bg: 'bg-green-50' },
+  ]
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
+      className="space-y-4"
+    >
+      <div className="rounded-xl bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#0EA5A0]/15 text-lg font-bold text-[#0EA5A0]">
+            {assignedTherapist?.name[0] ?? '?'}
+          </div>
+          <div>
+            <p className="text-base font-bold text-gray-900">康复师工作台</p>
+            <p className="text-xs text-gray-500">
+              康复师: {assignedTherapist?.name ?? '未分配'} · 用户: {user.name}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {stats.map((s) => (
+            <div key={s.label} className={cn('rounded-lg p-2.5', s.bg)}>
+              <p className="text-[10px] text-gray-500">{s.label}</p>
+              <p className={cn('mt-0.5 text-xl font-bold', s.color)}>{s.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="mb-2 flex items-center gap-1.5 text-sm font-bold text-gray-900">
+          <AlertCircle className="h-4 w-4 text-[#EF4444]" />
+          低分需关注动作
+          <span className="ml-1 rounded-full bg-[#EF4444] px-1.5 py-0.5 text-[10px] text-white">
+            {lowScoreCheckIns.length}
+          </span>
+        </h3>
+        <div className="space-y-2">
+          {lowScoreCheckIns.length === 0 ? (
+            <div className="rounded-xl bg-white p-6 text-center shadow-sm">
+              <CheckCircle2 className="mx-auto h-8 w-8 text-green-400" />
+              <p className="mt-2 text-sm text-gray-500">暂无低分动作，表现良好！</p>
+            </div>
+          ) : (
+            lowScoreCheckIns.map((ci) => (
+              <CheckInRow
+                key={ci.id}
+                checkIn={ci}
+                isLowScore
+                onFeedback={() => setFeedbackCheckIn(ci)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="mb-2 flex items-center gap-1.5 text-sm font-bold text-gray-900">
+          <CalendarDays className="h-4 w-4 text-[#0EA5A0]" />
+          最近打卡记录
+        </h3>
+        <div className="space-y-2">
+          {recentCheckIns.length === 0 ? (
+            <div className="rounded-xl bg-white p-6 text-center shadow-sm">
+              <Camera className="mx-auto h-8 w-8 text-gray-300" />
+              <p className="mt-2 text-sm text-gray-500">暂无打卡记录</p>
+            </div>
+          ) : (
+            recentCheckIns.map((ci) => (
+              <CheckInRow
+                key={ci.id}
+                checkIn={ci}
+                onFeedback={() => setFeedbackCheckIn(ci)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      {feedbackCheckIn && (
+        <FeedbackModal
+          checkIn={feedbackCheckIn}
+          onClose={() => setFeedbackCheckIn(null)}
+        />
+      )}
+    </motion.div>
+  )
+}
+
 function ChatTab() {
-  const { messages, addMessage, user, therapists } = useStore()
+  const { messages, addMessage, user, therapists, plan } = useStore()
   const [input, setInput] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
-  const therapist = therapists[0]
+  const therapist = therapists.find((t) => t.id === plan.therapistId) ?? therapists[0]
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })

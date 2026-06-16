@@ -33,28 +33,113 @@ const emptyForm = {
 type ReportMode = 'file' | 'text'
 
 type FilePreview =
-  | { type: 'image'; url: string; fileName: string }
-  | { type: 'pdf'; url: string; fileName: string; fileSize: number }
+  | { type: 'image'; base64: string; fileName: string }
+  | { type: 'pdf'; base64: string; fileName: string; fileSize: number }
 
 function formatFileSize(bytes: number): string {
   return `${Math.round(bytes / 1024)} KB`
 }
 
-function DiagnosisReportDisplay({ value }: { value: string }) {
-  const [expanded, setExpanded] = useState(false)
-
+function parseDiagnosisReport(value: string) {
   if (value.startsWith('FILE_IMAGE:')) {
     const rest = value.slice(11)
-    const [url, fileName] = rest.split('|')
+    const idx = rest.lastIndexOf('|')
+    if (idx === -1) return { type: 'image' as const, base64: rest, fileName: '图片' }
+    return { type: 'image' as const, base64: rest.slice(0, idx), fileName: rest.slice(idx + 1) }
+  }
+  if (value.startsWith('FILE_PDF:')) {
+    const rest = value.slice(9)
+    const parts = rest.split('|')
+    return { type: 'pdf' as const, base64: parts[0], fileName: parts[1] || '文档.pdf', fileSize: parts[2] ? parseInt(parts[2]) : 0 }
+  }
+  if (value.startsWith('TEXT:')) {
+    return { type: 'text' as const, content: value.slice(5) }
+  }
+  if (value.startsWith('FILE:')) {
+    const rest = value.slice(5)
+    if (rest.startsWith('data:image')) {
+      return { type: 'image' as const, base64: rest, fileName: '图片' }
+    }
+  }
+  return null
+}
+
+function PdfModal({ base64, fileName, fileSize, onClose }: {
+  base64: string; fileName: string; fileSize: number; onClose: () => void
+}) {
+  const handleOpen = () => {
+    window.open(base64, '_blank')
+  }
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="w-[90%] max-w-md rounded-2xl bg-white p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-800">PDF 文档</h3>
+          <button onClick={onClose} className="rounded-md p-1 text-gray-400 hover:bg-gray-100">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="flex flex-col items-center py-8">
+          <FileText size={96} style={{ color: '#EF4444' }} />
+          <p className="mt-4 text-sm font-medium text-gray-700">{fileName}</p>
+          <p className="mt-1 text-xs text-gray-400">{formatFileSize(fileSize)}</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handleOpen}
+            className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
+            style={{ backgroundColor: '#0EA5A0' }}
+          >
+            下载/打开
+          </button>
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-lg border border-gray-200 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          >
+            关闭
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function DiagnosisReportDisplay({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const [showPdfModal, setShowPdfModal] = useState(false)
+
+  const parsed = parseDiagnosisReport(value)
+
+  if (!parsed) {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium" style={{ backgroundColor: '#FFF3E0', color: '#FF8C42' }}>
+        <FileText size={12} />
+        {value.length > 30 ? value.slice(0, 30) + '...' : value}
+      </div>
+    )
+  }
+
+  if (parsed.type === 'image') {
     return (
       <div className="mt-2 flex items-center gap-2">
-        <a href={url} target="_blank" rel="noreferrer">
-          <img
-            src={url}
-            alt={fileName || '诊断报告'}
-            className="w-20 rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-80 transition"
-          />
-        </a>
+        <img
+          src={parsed.base64}
+          alt={parsed.fileName || '诊断报告'}
+          className="w-20 cursor-pointer rounded-lg border border-gray-200 object-cover transition hover:opacity-80"
+          onClick={() => window.open(parsed.base64, '_blank')}
+        />
         <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium" style={{ backgroundColor: '#CCFBF1', color: '#0EA5A0' }}>
           <FileImage size={12} />
           图片报告
@@ -63,59 +148,45 @@ function DiagnosisReportDisplay({ value }: { value: string }) {
     )
   }
 
-  if (value.startsWith('FILE_PDF:')) {
-    const rest = value.slice(9)
-    const parts = rest.split('|')
-    const url = parts[0]
-    const fileName = parts[1]
-    const fileSize = parts[2] ? formatFileSize(parseInt(parts[2])) : ''
+  if (parsed.type === 'pdf') {
     return (
-      <div className="mt-2 flex items-center gap-3">
-        <FileText size={32} style={{ color: '#EF4444' }} />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-700 truncate">{fileName}</p>
-          <p className="text-xs text-gray-400">{fileSize}</p>
+      <>
+        <div className="mt-2 flex items-center gap-3">
+          <FileText size={32} style={{ color: '#EF4444' }} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-gray-700">{parsed.fileName}</p>
+            <p className="text-xs text-gray-400">{formatFileSize(parsed.fileSize)}</p>
+          </div>
+          <button
+            onClick={() => setShowPdfModal(true)}
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-white"
+            style={{ backgroundColor: '#0EA5A0' }}
+          >
+            查看 PDF
+          </button>
         </div>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-md px-3 py-1.5 text-xs font-medium text-white"
-          style={{ backgroundColor: '#0EA5A0' }}
-        >
-          查看
-        </a>
-      </div>
+        <AnimatePresence>
+          {showPdfModal && (
+            <PdfModal
+              base64={parsed.base64}
+              fileName={parsed.fileName}
+              fileSize={parsed.fileSize}
+              onClose={() => setShowPdfModal(false)}
+            />
+          )}
+        </AnimatePresence>
+      </>
     )
   }
 
-  if (value.startsWith('FILE:')) {
-    const url = value.slice(5)
-    return (
-      <div className="mt-2 flex items-center gap-2">
-        <a href={url} target="_blank" rel="noreferrer">
-          <img
-            src={url}
-            alt="诊断报告"
-            className="w-20 rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-80 transition"
-          />
-        </a>
-        <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium" style={{ backgroundColor: '#FFF3E0', color: '#FF8C42' }}>
-          <FileText size={12} />
-          诊断报告
-        </span>
-      </div>
-    )
-  }
-
-  if (value.startsWith('TEXT:')) {
-    const text = value.slice(5)
+  if (parsed.type === 'text') {
+    const text = parsed.content
     const showExpand = text.length > 80
     const displayText = expanded || !showExpand ? text : text.slice(0, 80) + '...'
 
     return (
       <div
-        className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 leading-relaxed cursor-pointer hover:bg-gray-100 transition"
+        className="mt-2 cursor-pointer rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm leading-relaxed text-gray-600 transition hover:bg-gray-100"
         onClick={() => setExpanded(!expanded)}
       >
         {displayText}
@@ -128,48 +199,48 @@ function DiagnosisReportDisplay({ value }: { value: string }) {
     )
   }
 
-  return (
-    <div className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium" style={{ backgroundColor: '#FFF3E0', color: '#FF8C42' }}>
-      <FileText size={12} />
-      {value}
-    </div>
-  )
+  return null
 }
 
 export default function Injury() {
-  const { injuries, addInjury } = useStore()
+  const { injuries, addInjury, fileToBase64 } = useStore()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [reportMode, setReportMode] = useState<ReportMode>('file')
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null)
   const [showToast, setShowToast] = useState(false)
+  const [converting, setConverting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    const url = URL.createObjectURL(file)
-    let preview: FilePreview
-    let diagnosisValue: string
+    setConverting(true)
+    try {
+      const base64 = await fileToBase64(file)
+      let preview: FilePreview
+      let diagnosisValue: string
 
-    if (file.type.startsWith('image/')) {
-      preview = { type: 'image', url, fileName: file.name }
-      diagnosisValue = `FILE_IMAGE:${url}|${file.name}`
-    } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-      preview = { type: 'pdf', url, fileName: file.name, fileSize: file.size }
-      diagnosisValue = `FILE_PDF:${url}|${file.name}|${file.size}`
-    } else {
-      URL.revokeObjectURL(url)
-      return
+      if (file.type.startsWith('image/')) {
+        preview = { type: 'image', base64, fileName: file.name }
+        diagnosisValue = `FILE_IMAGE:${base64}|${file.name}`
+      } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        preview = { type: 'pdf', base64, fileName: file.name, fileSize: file.size }
+        diagnosisValue = `FILE_PDF:${base64}|${file.name}|${file.size}`
+      } else {
+        setConverting(false)
+        return
+      }
+
+      setFilePreview(preview)
+      setForm({ ...form, diagnosisReport: diagnosisValue })
+    } finally {
+      setConverting(false)
     }
-
-    setFilePreview(preview)
-    setForm({ ...form, diagnosisReport: diagnosisValue })
   }
 
   const removeFile = () => {
-    if (filePreview) URL.revokeObjectURL(filePreview.url)
     setFilePreview(null)
     setForm({ ...form, diagnosisReport: '' })
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -181,12 +252,15 @@ export default function Injury() {
     let diagnosisValue: string | undefined
     if (reportMode === 'file' && filePreview) {
       if (filePreview.type === 'image') {
-        diagnosisValue = `FILE_IMAGE:${filePreview.url}|${filePreview.fileName}`
+        diagnosisValue = `FILE_IMAGE:${filePreview.base64}|${filePreview.fileName}`
       } else {
-        diagnosisValue = `FILE_PDF:${filePreview.url}|${filePreview.fileName}|${filePreview.fileSize}`
+        diagnosisValue = `FILE_PDF:${filePreview.base64}|${filePreview.fileName}|${filePreview.fileSize}`
       }
     } else if (reportMode === 'text' && form.diagnosisReport.trim()) {
-      diagnosisValue = `TEXT:${form.diagnosisReport.trim()}`
+      const content = form.diagnosisReport.startsWith('TEXT:')
+        ? form.diagnosisReport.slice(5)
+        : form.diagnosisReport.trim()
+      if (content) diagnosisValue = `TEXT:${content}`
     }
 
     addInjury({
@@ -202,15 +276,16 @@ export default function Injury() {
 
     setForm(emptyForm)
     setFilePreview(null)
+    setReportMode('file')
     setShowForm(false)
     setShowToast(true)
     setTimeout(() => setShowToast(false), 2500)
   }
 
   const handleCancel = () => {
-    if (filePreview) URL.revokeObjectURL(filePreview.url)
     setFilePreview(null)
     setForm(emptyForm)
+    setReportMode('file')
     setShowForm(false)
   }
 
@@ -221,17 +296,17 @@ export default function Injury() {
       return (
         <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
           <img
-            src={filePreview.url}
+            src={filePreview.base64}
             alt="预览"
             className="h-[120px] rounded-lg border border-gray-200 object-cover"
           />
-          <div className="flex flex-1 items-center gap-2 min-w-0">
-            <FileImage size={16} className="text-gray-400 flex-shrink-0" />
-            <span className="text-sm text-gray-600 truncate">{filePreview.fileName}</span>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <FileImage size={16} className="flex-shrink-0 text-gray-400" />
+            <span className="truncate text-sm text-gray-600">{filePreview.fileName}</span>
           </div>
           <button
             onClick={removeFile}
-            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 transition"
+            className="rounded-md p-1.5 text-gray-400 transition hover:bg-gray-200 hover:text-gray-600"
           >
             <X size={16} />
           </button>
@@ -242,20 +317,18 @@ export default function Injury() {
     return (
       <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
         <FileText size={48} style={{ color: '#EF4444' }} className="flex-shrink-0" />
-        <div className="flex flex-1 flex-col justify-center min-w-0">
-          <span className="text-sm text-gray-600 truncate">{filePreview.fileName}</span>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs font-medium px-2 py-0.5 rounded" style={{ backgroundColor: '#FEE2E2', color: '#EF4444' }}>
+        <div className="flex min-w-0 flex-1 flex-col justify-center">
+          <span className="truncate text-sm text-gray-600">{filePreview.fileName}</span>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="rounded px-2 py-0.5 text-xs font-medium" style={{ backgroundColor: '#FEE2E2', color: '#EF4444' }}>
               PDF 文档
             </span>
-            <span className="text-xs text-gray-400">
-              {formatFileSize(filePreview.fileSize)}
-            </span>
+            <span className="text-xs text-gray-400">{formatFileSize(filePreview.fileSize)}</span>
           </div>
         </div>
         <button
           onClick={removeFile}
-          className="rounded-md p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 transition"
+          className="rounded-md p-1.5 text-gray-400 transition hover:bg-gray-200 hover:text-gray-600"
         >
           <X size={16} />
         </button>
@@ -284,7 +357,7 @@ export default function Injury() {
               initial={{ y: -60, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: -60, opacity: 0 }}
-              className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-xl px-5 py-3 shadow-lg"
+              className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 items-center gap-2 rounded-xl px-5 py-3 shadow-lg"
               style={{ backgroundColor: '#10B981', color: 'white' }}
             >
               <CheckCircle2 size={18} />
@@ -392,7 +465,12 @@ export default function Injury() {
                         onChange={handleFileSelect}
                         className="hidden"
                       />
-                      {filePreview ? (
+                      {converting ? (
+                        <div className="flex items-center justify-center rounded-lg border-2 border-dashed border-gray-300 py-6 text-gray-400">
+                          <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-[#0EA5A0]" />
+                          <span className="ml-2 text-sm">处理中...</span>
+                        </div>
+                      ) : filePreview ? (
                         renderPreview()
                       ) : (
                         <div
@@ -405,13 +483,15 @@ export default function Injury() {
                       )}
                     </div>
                   ) : (
-                    <textarea
-                      value={form.diagnosisReport.startsWith('TEXT:') ? form.diagnosisReport.slice(5) : form.diagnosisReport}
-                      onChange={(e) => setForm({ ...form, diagnosisReport: e.target.value })}
-                      rows={4}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#0EA5A0] focus:outline-none"
-                      placeholder="请输入或粘贴诊断报告内容..."
-                    />
+                    <div>
+                      <textarea
+                        value={form.diagnosisReport.startsWith('TEXT:') ? form.diagnosisReport.slice(5) : form.diagnosisReport}
+                        onChange={(e) => setForm({ ...form, diagnosisReport: e.target.value })}
+                        rows={4}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#0EA5A0] focus:outline-none"
+                        placeholder="请输入或粘贴诊断报告内容..."
+                      />
+                    </div>
                   )}
                 </div>
 
@@ -463,7 +543,7 @@ export default function Injury() {
                     <Calendar size={12} />
                     <span>{injury.injuryDate}</span>
                   </div>
-                  <p className="mt-2 text-sm text-gray-600 leading-relaxed">{injury.description}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-600">{injury.description}</p>
                   {injury.diagnosisReport && (
                     <DiagnosisReportDisplay value={injury.diagnosisReport} />
                   )}

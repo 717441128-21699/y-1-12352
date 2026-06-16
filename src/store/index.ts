@@ -25,6 +25,22 @@ import {
   membershipConfigs,
 } from '@/mock/data'
 
+function getTodayKey() {
+  return new Date().toISOString().split('T')[0]
+}
+
+function getDaysInRange(start: string, end: string): string[] {
+  const result: string[] = []
+  const cur = new Date(start)
+  const last = new Date(end)
+  if (cur > last) return result
+  while (cur <= last) {
+    result.push(cur.toISOString().split('T')[0])
+    cur.setDate(cur.getDate() + 1)
+  }
+  return result
+}
+
 const EXERCISES_LIBRARY: Exercise[] = [
   {
     id: 'lib_stretch_1',
@@ -98,10 +114,6 @@ function computeOverall(pain: number, fn: number, rom: number, str: number) {
   return Math.round(((10 - pain) + fn * 2 + rom + str * 2) / 6 * 10) / 10
 }
 
-function getTodayKey() {
-  return new Date().toISOString().split('T')[0]
-}
-
 function analyzeExerciseOnly(): { aiScore: number; aiFeedback: string; corrections: string[] } {
   const score = Math.floor(Math.random() * 25) + 72
   const feedbackPool = [
@@ -114,6 +126,15 @@ function analyzeExerciseOnly(): { aiScore: number; aiFeedback: string; correctio
   const corrPool = ['注意保持核心收紧', '动作速度可以再慢一些', '注意呼吸节奏', '幅度可以适当增加']
   const corrections = Math.random() > 0.5 ? [corrPool[Math.floor(Math.random() * corrPool.length)]] : []
   return { aiScore: score, aiFeedback, corrections }
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
 }
 
 interface AppState {
@@ -131,10 +152,13 @@ interface AppState {
   isAssessmentDue: boolean
   todaysDate: string
   hydrated: boolean
+  therapistReviews: { checkInId: string; therapistId: string; comment: string; timestamp: string; exerciseName: string }[]
 
   analyzeExercise: (exerciseId: string, photoUrl: string) => { aiScore: number; aiFeedback: string; corrections: string[] }
-  saveCheckIn: (exerciseId: string, photoUrl: string, analysis: { aiScore: number; aiFeedback: string; corrections: string[] }) => void
+  saveCheckIn: (exerciseId: string, date: string, photoUrl: string, analysis: { aiScore: number; aiFeedback: string; corrections: string[] }) => void
+  initializeDayCheckIns: (planId: string, date: string) => void
   initializeTodayCheckIns: () => void
+  getCheckInsForDate: (planId: string, date: string) => (CheckInRecord & { exercise?: Exercise })[]
   addInjury: (injury: InjuryRecord) => void
   addMessage: (message: ChatMessage) => void
   markNotificationRead: (id: string) => void
@@ -142,12 +166,18 @@ interface AppState {
   getAvailableTherapist: (date: string, startTime: string, endTime: string) => Therapist | null
   submitAssessment: (assessment: StageAssessment) => { phaseAdvanced: boolean; periodExtended: boolean; newPhase: number; newEndDate: string; oldPhase: number; oldEndDate: string }
   setPath: (path: string) => void
-  finishDayTraining: () => void
+  finishDayTraining: (planId: string, date: string) => void
   upgradeMembership: (level: 'silver' | 'gold') => void
   setActivePlan: (planId: string) => void
-  getTodayAvgScore: () => number
-  getTodayCompletedCount: () => number
+  getTodayAvgScore: (planId?: string) => number
+  getTodayCompletedCount: (planId?: string) => number
+  getTotalCountForDate: (planId: string, date: string) => { completed: number; total: number; avg: number }
+  getConsecutiveDaysForPlan: (planId: string) => number
   isSlotBooked: (date: string, startTime: string) => boolean
+  addTherapistReview: (checkInId: string, therapistId: string, exerciseName: string, comment: string) => void
+  getRecentCheckIns: (planId: string, limit?: number) => (CheckInRecord & { exercise?: Exercise })[]
+  getLowScoreCheckIns: (planId: string, threshold?: number) => (CheckInRecord & { exercise?: Exercise })[]
+  fileToBase64: (file: File) => Promise<string>
 }
 
 export const useStore = create<AppState>()(
@@ -167,19 +197,52 @@ export const useStore = create<AppState>()(
       isAssessmentDue: true,
       todaysDate: getTodayKey(),
       hydrated: false,
+      therapistReviews: [],
 
-      getTodayAvgScore: () => {
+      fileToBase64,
+
+      getTodayAvgScore: (planId) => {
         const state = get()
         const today = state.todaysDate
-        const done = state.checkIns.filter((c) => c.date === today && c.completed && c.aiScore > 0)
+        const pid = planId ?? state.plan.id
+        const done = state.checkIns.filter((c) => c.date === today && c.planId === pid && c.completed && c.aiScore > 0)
         if (done.length === 0) return 0
         return Math.round(done.reduce((s, c) => s + c.aiScore, 0) / done.length)
       },
 
-      getTodayCompletedCount: () => {
+      getTodayCompletedCount: (planId) => {
         const state = get()
         const today = state.todaysDate
-        return state.checkIns.filter((c) => c.date === today && c.completed).length
+        const pid = planId ?? state.plan.id
+        return state.checkIns.filter((c) => c.date === today && c.planId === pid && c.completed).length
+      },
+
+      getTotalCountForDate: (planId, date) => {
+        const state = get()
+        const list = state.checkIns.filter((c) => c.date === date && c.planId === planId)
+        const completed = list.filter((c) => c.completed)
+        const avg = completed.length > 0 && completed.some((c) => c.aiScore > 0)
+          ? Math.round(completed.filter((c) => c.aiScore > 0).reduce((s, c) => s + c.aiScore, 0) / completed.filter((c) => c.aiScore > 0).length)
+          : 0
+        return { completed: completed.length, total: list.length, avg }
+      },
+
+      getConsecutiveDaysForPlan: (planId) => {
+        const state = get()
+        const today = new Date(state.todaysDate)
+        let count = 0
+        let d = new Date(today)
+        while (true) {
+          const dk = d.toISOString().split('T')[0]
+          const { completed, total } = state.getTotalCountForDate(planId, dk)
+          if (total > 0 && completed === total) {
+            count++
+            d.setDate(d.getDate() - 1)
+          } else {
+            break
+          }
+        }
+        return count
       },
 
       isSlotBooked: (date, startTime) => {
@@ -194,55 +257,102 @@ export const useStore = create<AppState>()(
         exerciseId,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         photoUrl
-      ) => {
-        return analyzeExerciseOnly()
-      },
+      ) => analyzeExerciseOnly(),
 
-      saveCheckIn: (exerciseId, photoUrl, analysis) => {
-        const today = get().todaysDate
-        set((state) => ({
-          checkIns: state.checkIns.map((ci) =>
-            ci.exerciseId === exerciseId && ci.date === today
-              ? {
-                  ...ci,
-                  completed: true,
+      saveCheckIn: (exerciseId, date, photoUrl, analysis) => {
+        set((state) => {
+          const existing = state.checkIns.find((c) => c.exerciseId === exerciseId && c.date === date)
+          if (existing) {
+            return {
+              checkIns: state.checkIns.map((ci) =>
+                ci.exerciseId === exerciseId && ci.date === date
+                  ? { ...ci, completed: true, aiScore: analysis.aiScore, aiFeedback: analysis.aiFeedback, corrections: analysis.corrections, photoUrl }
+                  : ci
+              ),
+            }
+          } else {
+            return {
+              checkIns: [
+                ...state.checkIns,
+                {
+                  id: `ck_${Date.now()}_${exerciseId}`,
+                  userId: 'u001',
+                  planId: state.plan.id,
+                  exerciseId,
+                  date,
+                  photoUrl,
                   aiScore: analysis.aiScore,
                   aiFeedback: analysis.aiFeedback,
                   corrections: analysis.corrections,
-                  photoUrl,
-                }
-              : ci
-          ),
-        }))
+                  completed: true,
+                },
+              ],
+            }
+          }
+        })
       },
 
-      initializeTodayCheckIns: () => {
+      initializeDayCheckIns: (planId, date) => {
         const state = get()
-        const today = getTodayKey()
-        const activePlan = state.plan
-        if (!activePlan) return
-
-        const existingCheckIns = state.checkIns.filter(
-          (c) => c.planId === activePlan.id && c.date === today
-        )
-        if (existingCheckIns.length > 0) return
-
-        const newCheckIns: CheckInRecord[] = activePlan.exercises.map((ex) => ({
-          id: `ck_${Date.now()}_${ex.id}`,
+        const thePlan = state.plans.find((p) => p.id === planId)
+        if (!thePlan) return
+        const existing = state.checkIns.filter((c) => c.planId === planId && c.date === date)
+        if (existing.length > 0) return
+        const newCheckIns: CheckInRecord[] = thePlan.exercises.map((ex) => ({
+          id: `ck_${Date.now()}_${ex.id}_${date}`,
           userId: 'u001',
-          planId: activePlan.id,
+          planId,
           exerciseId: ex.id,
-          date: today,
+          date,
           photoUrl: '',
           aiScore: 0,
           aiFeedback: '',
           corrections: [],
           completed: false,
         }))
+        set((s) => ({ checkIns: [...s.checkIns, ...newCheckIns] }))
+      },
 
-        set((state) => ({
-          checkIns: [...state.checkIns, ...newCheckIns],
-        }))
+      initializeTodayCheckIns: () => {
+        const state = get()
+        const today = getTodayKey()
+        state.initializeDayCheckIns(state.plan.id, today)
+        // Also init past 14 days for calendar visibility
+        const yesterday = new Date()
+        for (let i = 1; i <= 14; i++) {
+          const d = new Date(yesterday)
+          d.setDate(d.getDate() - i)
+          const dk = d.toISOString().split('T')[0]
+          if (dk >= state.plan.startDate) {
+            state.initializeDayCheckIns(state.plan.id, dk)
+          }
+        }
+      },
+
+      getCheckInsForDate: (planId, date) => {
+        const state = get()
+        const thePlan = state.plans.find((p) => p.id === planId)
+        if (!thePlan) return []
+        const byExId = new Map<string, CheckInRecord>()
+        state.checkIns
+          .filter((c) => c.planId === planId && c.date === date)
+          .forEach((c) => byExId.set(c.exerciseId, c))
+        return thePlan.exercises.map((ex) => {
+          const ci = byExId.get(ex.id)
+          return ci ? { ...ci, exercise: ex } : ({
+            id: `tmp_${ex.id}`,
+            userId: 'u001',
+            planId,
+            exerciseId: ex.id,
+            date,
+            photoUrl: '',
+            aiScore: 0,
+            aiFeedback: '',
+            corrections: [],
+            completed: false,
+            exercise: ex,
+          })
+        })
       },
 
       addInjury: (injury) => {
@@ -283,23 +393,14 @@ export const useStore = create<AppState>()(
       },
 
       addMessage: (message) =>
-        set((state) => ({
-          messages: [...state.messages, message],
-        })),
+        set((state) => ({ messages: [...state.messages, message] })),
 
       markNotificationRead: (id) =>
         set((state) => ({
-          notifications: state.notifications.map((n) =>
-            n.id === id ? { ...n, read: true } : n
-          ),
+          notifications: state.notifications.map((n) => (n.id === id ? { ...n, read: true } : n)),
         })),
 
-      getAvailableTherapist: (
-        date,
-        startTime,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        endTime
-      ) => {
+      getAvailableTherapist: (date, startTime) => {
         const state = get()
         const bookedTherapistIds = state.appointments
           .filter((a) => a.date === date && a.startTime === startTime && a.status !== 'cancelled')
@@ -366,11 +467,7 @@ export const useStore = create<AppState>()(
         const phaseAdvanced = newPhase > oldPhase
         const periodExtended = newEndDate !== oldEndDate
 
-        const updatedPlan: RehabPlan = {
-          ...currentPlan,
-          phase: newPhase,
-          endDate: newEndDate,
-        }
+        const updatedPlan: RehabPlan = { ...currentPlan, phase: newPhase, endDate: newEndDate }
 
         set((s) => ({
           assessments: [...s.assessments, assessment],
@@ -398,25 +495,26 @@ export const useStore = create<AppState>()(
 
       setPath: (path) => set({ currentPath: path }),
 
-      finishDayTraining: () => {
+      finishDayTraining: (planId, date) => {
         const state = get()
-        const today = state.todaysDate
-        const plan = state.plan
-        const doneCount = state.checkIns.filter((c) => c.date === today && c.planId === plan.id && c.completed).length
-        const totalCount = state.checkIns.filter((c) => c.date === today && c.planId === plan.id).length
-        if (totalCount === 0 || doneCount < totalCount) return
+        const { completed, total } = state.getTotalCountForDate(planId, date)
+        if (total === 0 || completed < total) return
 
-        const newConsecutive = state.user.consecutiveDays + 1
+        const consecutive = state.getConsecutiveDaysForPlan(planId)
+        // We'll bump user.consecutiveDays to reflect max across plans
+        const newConsecutive = Math.max(state.user.consecutiveDays, consecutive)
         let newLevel = state.user.membershipLevel
         const cfg = membershipConfigs
-        if (newLevel === 'free' && newConsecutive >= cfg[1].requiredDays) {
-          newLevel = 'silver'
-        } else if (newLevel === 'silver' && newConsecutive >= cfg[2].requiredDays) {
-          newLevel = 'gold'
-        }
+        if (newLevel === 'free' && newConsecutive >= cfg[1].requiredDays) newLevel = 'silver'
+        else if (newLevel === 'silver' && newConsecutive >= cfg[2].requiredDays) newLevel = 'gold'
 
         set((s) => ({
-          user: { ...s.user, consecutiveDays: newConsecutive, membershipLevel: newLevel, paidUpgrade: newLevel !== s.user.membershipLevel ? false : s.user.paidUpgrade },
+          user: {
+            ...s.user,
+            consecutiveDays: newConsecutive,
+            membershipLevel: newLevel,
+            paidUpgrade: newLevel !== s.user.membershipLevel ? false : s.user.paidUpgrade,
+          },
           notifications: newLevel !== s.user.membershipLevel
             ? [
                 {
@@ -458,6 +556,55 @@ export const useStore = create<AppState>()(
           get().initializeTodayCheckIns()
         }
       },
+
+      addTherapistReview: (checkInId, therapistId, exerciseName, comment) => {
+        const timestamp = new Date().toLocaleString('zh-CN')
+        set((state) => ({
+          therapistReviews: [
+            { checkInId, therapistId, exerciseName, comment, timestamp },
+            ...state.therapistReviews,
+          ],
+          checkIns: state.checkIns.map((c) =>
+            c.id === checkInId
+              ? { ...c, therapistFeedback: comment, therapistId, therapistTimestamp: timestamp }
+              : c
+          ),
+          notifications: [
+            {
+              id: `n_${Date.now()}`,
+              type: 'approval',
+              title: '康复师反馈已到达',
+              message: `您的${exerciseName}训练收到了康复师的反馈`,
+              timestamp,
+              read: false,
+            },
+            ...state.notifications,
+          ],
+        }))
+      },
+
+      getRecentCheckIns: (planId, limit = 20) => {
+        const state = get()
+        const thePlan = state.plans.find((p) => p.id === planId)
+        if (!thePlan) return []
+        const exMap = new Map(thePlan.exercises.map((e) => [e.id, e]))
+        return state.checkIns
+          .filter((c) => c.planId === planId && c.completed)
+          .sort((a, b) => b.date.localeCompare(a.date))
+          .slice(0, limit)
+          .map((c) => ({ ...c, exercise: exMap.get(c.exerciseId) }))
+      },
+
+      getLowScoreCheckIns: (planId, threshold = 70) => {
+        const state = get()
+        const thePlan = state.plans.find((p) => p.id === planId)
+        if (!thePlan) return []
+        const exMap = new Map(thePlan.exercises.map((e) => [e.id, e]))
+        return state.checkIns
+          .filter((c) => c.planId === planId && c.completed && c.aiScore > 0 && c.aiScore < threshold)
+          .sort((a, b) => a.aiScore - b.aiScore)
+          .map((c) => ({ ...c, exercise: exMap.get(c.exerciseId) }))
+      },
     }),
     {
       name: 'rehab-app-storage',
@@ -472,12 +619,14 @@ export const useStore = create<AppState>()(
         messages: state.messages,
         notifications: state.notifications,
         isAssessmentDue: state.isAssessmentDue,
+        therapistReviews: state.therapistReviews,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.hydrated = true
           state.todaysDate = getTodayKey()
-          state.initializeTodayCheckIns()
+          // Delay a tick to ensure state is fully restored
+          setTimeout(() => state.initializeTodayCheckIns(), 100)
         }
       },
     }
